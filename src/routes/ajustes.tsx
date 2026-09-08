@@ -1,9 +1,27 @@
 import { createFileRoute } from "@tanstack/react-router";
+import {
+  IcoDatos,
+  IcoEtiquetas,
+  IcoImprimir,
+  IcoMoneda,
+  IcoNegocio,
+  IcoTarjeta,
+  IcoUsuarios,
+} from "@/chasis/iconos";
 import { useState } from "react";
 import { toast } from "sonner";
-import { Building2, CircleDollarSign, CreditCard, Database, Printer, Tags, Users } from "lucide-react";
 import { AppShell, PageHead } from "@/components/app-shell";
-import { Badge, Btn, Card, CardHead, ConfirmDialog, Field, Input, Modal, Select } from "@/components/ui-kit";
+import {
+  Badge,
+  Btn,
+  Card,
+  CardHead,
+  ConfirmDialog,
+  Field,
+  Input,
+  Modal,
+  Select,
+} from "@/components/ui-kit";
 import { logAudit, mutate, resetDatabase, useAppState } from "@/lib/store";
 import { uid } from "@/lib/seed";
 import { dt, num } from "@/lib/format";
@@ -15,9 +33,15 @@ export const Route = createFileRoute("/ajustes")({
   head: () => ({
     meta: [
       { title: "Ajustes · Karelys Delicias" },
-      { name: "description", content: "Empresa, usuarios y permisos, tasas, precios, pagos e impresión." },
+      {
+        name: "description",
+        content: "Empresa, usuarios y permisos, tasas, precios, pagos e impresión.",
+      },
       { property: "og:title", content: "Ajustes · Karelys Delicias" },
-      { property: "og:description", content: "Empresa, usuarios y permisos, tasas, precios, pagos e impresión." },
+      {
+        property: "og:description",
+        content: "Empresa, usuarios y permisos, tasas, precios, pagos e impresión.",
+      },
     ],
   }),
   component: () => (
@@ -28,13 +52,13 @@ export const Route = createFileRoute("/ajustes")({
 });
 
 const TABS = [
-  ["empresa", "Empresa", Building2],
-  ["usuarios", "Usuarios y permisos", Users],
-  ["tasas", "Tasas de cambio", CircleDollarSign],
-  ["precios", "Tipos de precio", Tags],
-  ["pagos", "Métodos de pago", CreditCard],
-  ["impresion", "Impresión y numeración", Printer],
-  ["datos", "Datos e importación", Database],
+  ["empresa", "Empresa", IcoNegocio],
+  ["usuarios", "Usuarios y permisos", IcoUsuarios],
+  ["tasas", "Tasas de cambio", IcoMoneda],
+  ["precios", "Tipos de precio", IcoEtiquetas],
+  ["pagos", "Métodos de pago", IcoTarjeta],
+  ["impresion", "Impresión y numeración", IcoImprimir],
+  ["datos", "Datos e importación", IcoDatos],
 ] as const;
 
 function Ajustes() {
@@ -57,7 +81,9 @@ function Ajustes() {
       </div>
       <div className="grid items-start gap-6 lg:grid-cols-[15rem_minmax(0,1fr)]">
         <aside className="sticky top-20 hidden rounded-lg border border-border bg-secondary/60 p-3 lg:block">
-          <p className="px-3 pb-3 pt-1 text-xs font-semibold uppercase text-texto-3">Configuración</p>
+          <p className="px-3 pb-3 pt-1 text-xs font-semibold uppercase text-texto-3">
+            Configuración
+          </p>
           <nav className="space-y-1" aria-label="Secciones de ajustes">
             {TABS.map(([k, label, Icon]) => (
               <Btn
@@ -71,7 +97,7 @@ function Ajustes() {
                     : "text-muted-foreground")
                 }
               >
-                <Icon className={"size-4 shrink-0 " + (tab === k ? "text-sol" : "text-texto-3")} />
+                <Icon />
                 <span className="min-w-0 leading-snug">{label}</span>
               </Btn>
             ))}
@@ -97,7 +123,10 @@ function Empresa() {
   const [f, setF] = useState(s.company);
   return (
     <Card className="max-w-4xl">
-      <CardHead title="Configuración de empresa" sub="Karelys Delicias es la marca principal del sistema" />
+      <CardHead
+        title="Configuración de empresa"
+        sub="Karelys Delicias es la marca principal del sistema"
+      />
       <div className="grid gap-3 p-4 sm:grid-cols-2">
         <Field label="Nombre">
           <Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
@@ -137,7 +166,9 @@ function Empresa() {
               />
             </label>
             <div className="flex flex-col gap-1.5">
-              <p className="text-xs text-texto-3">PNG o JPG. Se mostrará en el login, el menú y el ticket.</p>
+              <p className="text-xs text-texto-3">
+                PNG o JPG. Se mostrará en el login, el menú y el ticket.
+              </p>
               {f.logoUrl && (
                 <Btn size="sm" onClick={() => setF({ ...f, logoUrl: "" })}>
                   Quitar logo
@@ -173,9 +204,12 @@ function Usuarios() {
   const [roleEdit, setRoleEdit] = useState<string | null>(null);
   const [roleDel, setRoleDel] = useState<string | null>(null);
 
-
   if (!can("manage_users"))
-    return <Card className="p-6 text-sm text-muted-foreground">No tienes permiso para gestionar usuarios.</Card>;
+    return (
+      <Card className="p-6 text-sm text-muted-foreground">
+        No tienes permiso para gestionar usuarios.
+      </Card>
+    );
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
@@ -183,7 +217,13 @@ function Usuarios() {
         <CardHead
           title="Usuarios"
           action={
-            <Btn size="sm" variant="amber" onClick={() => setEdit({ username: "", fullName: "", roleId: s.roles[0].id, active: true })}>
+            <Btn
+              size="sm"
+              variant="amber"
+              onClick={() =>
+                setEdit({ username: "", fullName: "", roleId: s.roles[0].id, active: true })
+              }
+            >
               Nuevo
             </Btn>
           }
@@ -197,7 +237,9 @@ function Usuarios() {
                   {u.username} · {s.roles.find((r) => r.id === u.roleId)?.name}
                 </p>
               </div>
-              <Badge tone={u.active ? "green" : "neutral"}>{u.active ? "Activo" : "Inactivo"}</Badge>
+              <Badge tone={u.active ? "green" : "neutral"}>
+                {u.active ? "Activo" : "Inactivo"}
+              </Badge>
               <Btn size="sm" onClick={() => setEdit(u)}>
                 Editar
               </Btn>
@@ -241,8 +283,14 @@ function Usuarios() {
                   }
                   className="min-w-[8rem] flex-1 bg-transparent text-sm font-medium outline-none"
                 />
-                <span className="num text-xs text-muted-foreground">{r.permissions.length} permisos</span>
-                <Btn size="sm" variant="ghost" onClick={() => setRoleEdit(roleEdit === r.id ? null : r.id)}>
+                <span className="num text-xs text-muted-foreground">
+                  {r.permissions.length} permisos
+                </span>
+                <Btn
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setRoleEdit(roleEdit === r.id ? null : r.id)}
+                >
                   {roleEdit === r.id ? "Cerrar" : "Permisos"}
                 </Btn>
                 <Btn
@@ -263,7 +311,6 @@ function Usuarios() {
                 >
                   Eliminar
                 </Btn>
-
               </div>
               {roleEdit === r.id && (
                 <div className="mt-2 grid grid-cols-2 gap-1">
@@ -308,20 +355,37 @@ function Usuarios() {
         }}
       />
 
-      <Modal open={!!edit} onClose={() => setEdit(null)} title={edit?.id ? "Editar usuario" : "Nuevo usuario"}>
+      <Modal
+        open={!!edit}
+        onClose={() => setEdit(null)}
+        title={edit?.id ? "Editar usuario" : "Nuevo usuario"}
+      >
         {edit && (
           <div className="space-y-3">
             <Field label="Nombre completo">
-              <Input value={edit.fullName ?? ""} onChange={(e) => setEdit({ ...edit, fullName: e.target.value })} />
+              <Input
+                value={edit.fullName ?? ""}
+                onChange={(e) => setEdit({ ...edit, fullName: e.target.value })}
+              />
             </Field>
             <Field label="Usuario">
-              <Input value={edit.username ?? ""} onChange={(e) => setEdit({ ...edit, username: e.target.value })} />
+              <Input
+                value={edit.username ?? ""}
+                onChange={(e) => setEdit({ ...edit, username: e.target.value })}
+              />
             </Field>
             <Field label="Contraseña" hint={edit.id ? "Déjala vacía para no cambiarla" : undefined}>
-              <Input type="text" value={edit.password ?? ""} onChange={(e) => setEdit({ ...edit, password: e.target.value })} />
+              <Input
+                type="text"
+                value={edit.password ?? ""}
+                onChange={(e) => setEdit({ ...edit, password: e.target.value })}
+              />
             </Field>
             <Field label="Rol">
-              <Select value={edit.roleId} onChange={(e) => setEdit({ ...edit, roleId: e.target.value })}>
+              <Select
+                value={edit.roleId}
+                onChange={(e) => setEdit({ ...edit, roleId: e.target.value })}
+              >
                 {s.roles.map((r) => (
                   <option key={r.id} value={r.id}>
                     {r.name}
@@ -330,7 +394,10 @@ function Usuarios() {
               </Select>
             </Field>
             <Field label="Estado">
-              <Select value={edit.active ? "1" : "0"} onChange={(e) => setEdit({ ...edit, active: e.target.value === "1" })}>
+              <Select
+                value={edit.active ? "1" : "0"}
+                onChange={(e) => setEdit({ ...edit, active: e.target.value === "1" })}
+              >
                 <option value="1">Activo</option>
                 <option value="0">Desactivado</option>
               </Select>
@@ -340,7 +407,8 @@ function Usuarios() {
               <Btn
                 variant="amber"
                 onClick={() => {
-                  if (!edit.username?.trim() || !edit.fullName?.trim()) return toast.error("Completa nombre y usuario");
+                  if (!edit.username?.trim() || !edit.fullName?.trim())
+                    return toast.error("Completa nombre y usuario");
                   mutate((st) => {
                     if (edit.id) {
                       const u = st.users.find((x) => x.id === edit.id)!;
@@ -398,13 +466,18 @@ function Tasas() {
   const s = useAppState();
   return (
     <Card>
-      <CardHead title="Historial de tasas" sub="Cada venta guarda la tasa usada; el histórico nunca se recalcula" />
+      <CardHead
+        title="Historial de tasas"
+        sub="Cada venta guarda la tasa usada; el histórico nunca se recalcula"
+      />
       <div className="divide-y divide-border">
         {s.rates.slice(0, 60).map((r) => (
           <div key={r.id} className="flex flex-wrap items-center gap-3 px-4 py-2.5 text-sm">
             <Badge tone="amber">{r.source.replace("_", " ")}</Badge>
             <span className="num min-w-[6rem] flex-1">{num(r.value)}</span>
-            <span className="text-xs text-muted-foreground">{r.automatic ? "Automática" : "Manual"}</span>
+            <span className="text-xs text-muted-foreground">
+              {r.automatic ? "Automática" : "Manual"}
+            </span>
             <span className="text-xs text-muted-foreground">
               {s.users.find((u) => u.id === r.userId)?.fullName ?? "Sistema"}
             </span>
@@ -423,7 +496,11 @@ function Precios() {
     <Card className="max-w-xl">
       <CardHead title="Tipos de precio" sub="Configurables: agrega tantos como necesites" />
       <div className="flex flex-wrap gap-2 border-b border-border p-3">
-        <Input placeholder="Nuevo tipo de precio" value={name} onChange={(e) => setName(e.target.value)} />
+        <Input
+          placeholder="Nuevo tipo de precio"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
         <Btn
           variant="amber"
           onClick={() => {
@@ -466,7 +543,9 @@ function Precios() {
               <Btn
                 size="sm"
                 variant="ghost"
-                onClick={() => mutate((st) => (st.priceTypes = st.priceTypes.filter((x) => x.id !== p.id)))}
+                onClick={() =>
+                  mutate((st) => (st.priceTypes = st.priceTypes.filter((x) => x.id !== p.id)))
+                }
               >
                 Eliminar
               </Btn>
@@ -485,7 +564,11 @@ function Pagos() {
     <Card className="max-w-2xl">
       <CardHead title="Métodos de pago" />
       <div className="grid gap-2 border-b border-border p-3 sm:grid-cols-4">
-        <Input placeholder="Nombre" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
+        <Input
+          placeholder="Nombre"
+          value={f.name}
+          onChange={(e) => setF({ ...f, name: e.target.value })}
+        />
         <Select value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value })}>
           <option value="USD">USD</option>
           <option value="BS">Bolívares</option>
@@ -547,28 +630,62 @@ function Impresion() {
       <CardHead title="Impresión y numeración" sub="Ticket térmico 58mm y correlativos" />
       <div className="grid gap-3 p-4 sm:grid-cols-2">
         <Field label="Mensaje final del ticket">
-          <Input value={f.ticketFooter} onChange={(e) => setF({ ...f, ticketFooter: e.target.value })} />
+          <Input
+            value={f.ticketFooter}
+            onChange={(e) => setF({ ...f, ticketFooter: e.target.value })}
+          />
         </Field>
         <Field label="Prefijo de ventas">
-          <Input value={f.salePrefix} onChange={(e) => setF({ ...f, salePrefix: e.target.value })} />
+          <Input
+            value={f.salePrefix}
+            onChange={(e) => setF({ ...f, salePrefix: e.target.value })}
+          />
         </Field>
         <Field label="Próximo número de venta">
-          <Input className="num" type="number" value={f.saleNext} onChange={(e) => setF({ ...f, saleNext: parseInt(e.target.value) || 1 })} />
+          <Input
+            className="num"
+            type="number"
+            value={f.saleNext}
+            onChange={(e) => setF({ ...f, saleNext: parseInt(e.target.value) || 1 })}
+          />
         </Field>
         <Field label="Prefijo de pedidos">
-          <Input value={f.orderPrefix} onChange={(e) => setF({ ...f, orderPrefix: e.target.value })} />
+          <Input
+            value={f.orderPrefix}
+            onChange={(e) => setF({ ...f, orderPrefix: e.target.value })}
+          />
         </Field>
         <Field label="Redondeo en Bs">
-          <Input className="num" type="number" value={f.bsRounding} onChange={(e) => setF({ ...f, bsRounding: parseFloat(e.target.value) || 1 })} />
+          <Input
+            className="num"
+            type="number"
+            value={f.bsRounding}
+            onChange={(e) => setF({ ...f, bsRounding: parseFloat(e.target.value) || 1 })}
+          />
         </Field>
         <Field label="Tortas frías · mínimo USD">
-          <Input className="num" value={String(f.coldCakeMin)} onChange={(e) => setF({ ...f, coldCakeMin: parseFloat(e.target.value.replace(",", ".")) || 1.1 })} />
+          <Input
+            className="num"
+            value={String(f.coldCakeMin)}
+            onChange={(e) =>
+              setF({ ...f, coldCakeMin: parseFloat(e.target.value.replace(",", ".")) || 1.1 })
+            }
+          />
         </Field>
         <Field label="Tortas frías · máximo USD">
-          <Input className="num" value={String(f.coldCakeMax)} onChange={(e) => setF({ ...f, coldCakeMax: parseFloat(e.target.value.replace(",", ".")) || 1.2 })} />
+          <Input
+            className="num"
+            value={String(f.coldCakeMax)}
+            onChange={(e) =>
+              setF({ ...f, coldCakeMax: parseFloat(e.target.value.replace(",", ".")) || 1.2 })
+            }
+          />
         </Field>
         <Field label="Categoría de tortas frías">
-          <Select value={f.coldCakeCategory} onChange={(e) => setF({ ...f, coldCakeCategory: e.target.value })}>
+          <Select
+            value={f.coldCakeCategory}
+            onChange={(e) => setF({ ...f, coldCakeCategory: e.target.value })}
+          >
             {s.categories.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
@@ -600,7 +717,10 @@ function Datos() {
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Card>
-        <CardHead title="Importar productos" sub="CSV: codigo,nombre,categoria,precio_mayor,precio_detal,stock" />
+        <CardHead
+          title="Importar productos"
+          sub="CSV: codigo,nombre,categoria,precio_mayor,precio_detal,stock"
+        />
         <div className="space-y-3 p-4">
           <input
             type="file"
@@ -617,7 +737,9 @@ function Datos() {
                   for (const line of lines) {
                     const [code, name, category, mayor, detal, stock] = line.split(",");
                     if (!code || !name) continue;
-                    let cat = st.categories.find((c) => c.name.toLowerCase() === (category ?? "").trim().toLowerCase());
+                    let cat = st.categories.find(
+                      (c) => c.name.toLowerCase() === (category ?? "").trim().toLowerCase(),
+                    );
                     if (!cat) {
                       cat = { id: uid(), name: (category || "Sin categoría").trim(), active: true };
                       st.categories.push(cat);
@@ -627,7 +749,8 @@ function Datos() {
                       priceTypeId: pt.id,
                       amount: parseFloat((i === 0 ? mayor : detal) || mayor || "0") || 0,
                     }));
-                    if (existing) Object.assign(existing, { name: name.trim(), categoryId: cat.id, prices });
+                    if (existing)
+                      Object.assign(existing, { name: name.trim(), categoryId: cat.id, prices });
                     else
                       st.products.push({
                         id: uid(),
@@ -650,8 +773,9 @@ function Datos() {
             }}
           />
           <p className="text-xs text-muted-foreground">
-            El catálogo inicial ({s.products.filter((p) => !p.isCombo).length} productos) ya fue cargado desde el Excel
-            entregado, más {s.products.filter((p) => p.isCombo).length} combos.
+            El catálogo inicial ({s.products.filter((p) => !p.isCombo).length} productos) ya fue
+            cargado desde el Excel entregado, más {s.products.filter((p) => p.isCombo).length}{" "}
+            combos.
           </p>
         </div>
       </Card>
@@ -674,7 +798,8 @@ function Datos() {
             Borrar datos demo y reiniciar
           </Btn>
           <p className="text-xs text-muted-foreground">
-            Reinicia ventas, pedidos, clientes y movimientos, y restaura el catálogo original del Excel.
+            Reinicia ventas, pedidos, clientes y movimientos, y restaura el catálogo original del
+            Excel.
           </p>
         </div>
       </Card>

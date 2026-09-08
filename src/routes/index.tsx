@@ -1,17 +1,17 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
-  ArrowDownToLine,
-  ArrowUpFromLine,
-  CalendarClock,
-  ChevronRight,
-  CreditCard,
-  PackageSearch,
-  ShoppingCart,
-  TrendingUp,
-  UserPlus,
-  Wallet,
-} from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+  IcoCaja,
+  IcoChevron,
+  IcoEntrada,
+  IcoPedidos,
+  IcoPersonaMas,
+  IcoSalida,
+  IcoStockBajo,
+  IcoTarjeta,
+  IcoTendencia,
+  IcoVenta,
+} from "@/chasis/iconos";
+import type { Icono } from "@/chasis/iconos";
 import { AppShell, PageHead } from "@/components/app-shell";
 import { useSession } from "@/lib/auth";
 import { Badge, BarraProg, Btn, Card, CardHead, Cifra, Empty } from "@/components/ui-kit";
@@ -89,28 +89,28 @@ function Dashboard() {
           label="Ventas de hoy"
           valor={usd(totalUsd)}
           pie={`${sales.length} ventas · ${bs(totalUsd * rate)}`}
-          icon={TrendingUp}
+          icon={IcoTendencia}
           tone="sol"
         />
         <CifraT
           label="Pedidos pendientes"
           valor={String(pending.length)}
           pie="por atender"
-          icon={CalendarClock}
+          icon={IcoPedidos}
         />
         <CifraT
           label="Stock bajo"
           valor={String(low.length)}
           pie="productos"
-          icon={PackageSearch}
+          icon={IcoStockBajo}
           alerta={low.length > 0}
         />
-        <CifraT label="Caja actual" valor={usd(cash)} pie="efectivo USD + Bs" icon={Wallet} />
+        <CifraT label="Caja actual" valor={usd(cash)} pie="efectivo USD + Bs" icon={IcoCaja} />
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-[1.7fr_1fr]">
         <Card>
-          <CardHead title="Ventas del día" sub="Por hora, equivalente en USD" icon={TrendingUp} />
+          <CardHead title="Ventas del día" sub="Por hora, equivalente en USD" icon={IcoTendencia} />
           <div className="px-4 pb-4 pt-5">
             {totalUsd === 0 ? (
               <p className="flex h-28 items-center justify-center text-etiqueta text-texto-3">
@@ -144,7 +144,7 @@ function Dashboard() {
         </Card>
 
         <Card>
-          <CardHead title="Métodos de pago" sub="Hoy" icon={CreditCard} />
+          <CardHead title="Métodos de pago" sub="Hoy" icon={IcoTarjeta} />
           <div className="divide-y divide-border">
             {byMethod.map((m) => (
               <div key={m.id} className="px-4 py-[0.6rem]">
@@ -169,20 +169,20 @@ function Dashboard() {
         <Card>
           <CardHead
             title="Pedidos pendientes"
-            icon={CalendarClock}
+            icon={IcoPedidos}
             action={
               <Link
                 to="/pedidos"
                 className="inline-flex items-center gap-1 text-etiqueta text-sol-70 hover:underline"
               >
-                Ver todos <ChevronRight className="size-4" strokeWidth={1.75} />
+                Ver todos <IcoChevron />
               </Link>
             }
           />
           {pending.length === 0 ? (
             <div className="p-4">
               <Empty
-                icon={CalendarClock}
+                icon={IcoPedidos}
                 title="Sin pedidos pendientes"
                 sub="Los pedidos que entren por WhatsApp aparecerán aquí para montarlos y entregarlos."
               />
@@ -215,22 +215,20 @@ function Dashboard() {
         </Card>
 
         <Card>
-          <CardHead title="Accesos rápidos" icon={ShoppingCart} />
+          <CardHead title="Accesos rápidos" icon={IcoVenta} />
           <div className="grid grid-cols-2 gap-2 p-3">
-            {can("create_sale") && <Quick to="/venta" icon={ShoppingCart} label="Nueva venta" />}
-            {can("edit_orders") && (
-              <Quick to="/pedidos" icon={CalendarClock} label="Nuevo pedido" />
-            )}
+            {can("create_sale") && <Quick to="/venta" icon={IcoVenta} label="Nueva venta" />}
+            {can("edit_orders") && <Quick to="/pedidos" icon={IcoPedidos} label="Nuevo pedido" />}
             {can("edit_customers") && (
-              <Quick to="/clientes" icon={UserPlus} label="Nuevo cliente" />
+              <Quick to="/clientes" icon={IcoPersonaMas} label="Nuevo cliente" />
             )}
             {can("edit_inventory") && (
-              <Quick to="/inventario" icon={ArrowDownToLine} label="Registrar entrada" />
+              <Quick to="/inventario" icon={IcoEntrada} label="Registrar entrada" />
             )}
             {can("edit_inventory") && (
-              <Quick to="/inventario" icon={ArrowUpFromLine} label="Registrar salida" />
+              <Quick to="/inventario" icon={IcoSalida} label="Registrar salida" />
             )}
-            {can("close_cash") && <Quick to="/cierre" icon={Wallet} label="Cerrar caja" />}
+            {can("close_cash") && <Quick to="/cierre" icon={IcoCaja} label="Cerrar caja" />}
           </div>
         </Card>
       </div>
@@ -260,7 +258,7 @@ function CifraT({
   label: string;
   valor: string;
   pie?: string;
-  icon?: LucideIcon;
+  icon?: Icono;
   tone?: "papel" | "sol";
   alerta?: boolean;
 }) {
@@ -278,7 +276,7 @@ function CifraT({
           sol ? "text-noche/70" : "text-texto-2",
         )}
       >
-        {Icon && <Icon className="size-4 shrink-0" strokeWidth={1.75} />}
+        {Icon && <Icon />}
         {label}
       </p>
       <Cifra size="lg" className={cn(alerta && !sol && "text-rojo")}>
@@ -292,13 +290,13 @@ function CifraT({
 }
 
 /* Rejilla de un toque: el hover marca el borde ámbar, no el icono. */
-function Quick({ to, icon: Icon, label }: { to: string; icon: LucideIcon; label: string }) {
+function Quick({ to, icon: Icon, label }: { to: string; icon: Icono; label: string }) {
   return (
     <Link
       to={to}
       className="flex min-h-10 items-center gap-[0.6rem] rounded-md border border-border bg-card px-3 py-[0.55rem] text-etiqueta text-texto transition-[border-color,background-color] duration-[120ms] hover:border-sol hover:bg-sol-vela active:translate-y-px"
     >
-      <Icon className="size-4 shrink-0 text-texto-2" strokeWidth={1.75} />
+      <Icon />
       <span className="min-w-0 truncate">{label}</span>
     </Link>
   );

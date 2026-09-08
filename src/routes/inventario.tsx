@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { IcoBuscar, IcoMas } from "@/chasis/iconos";
 import { useState } from "react";
-import { Plus, Search } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell, PageHead } from "@/components/app-shell";
 import { useSession } from "@/lib/auth";
@@ -88,7 +88,7 @@ function Inventario() {
                 })
               }
             >
-              <Plus className="size-4" /> Nuevo producto
+              <IcoMas /> Nuevo producto
             </Btn>
           )
         }
@@ -117,7 +117,7 @@ function Inventario() {
         <>
           <div className="mb-3 flex flex-col gap-2 sm:flex-row">
             <div className="relative flex-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-texto-3" />
+              <IcoBuscar />
               <Input
                 className="pl-9"
                 placeholder="Buscar producto o código"

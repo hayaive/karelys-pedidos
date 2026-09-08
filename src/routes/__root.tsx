@@ -81,12 +81,14 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { title: "Karelys Delicias · Sistema de mostrador" },
       {
         name: "description",
-        content: "POS y administración para Karelys Delicias: ventas, pedidos, inventario, clientes y caja.",
+        content:
+          "POS y administración para Karelys Delicias: ventas, pedidos, inventario, clientes y caja.",
       },
       { property: "og:title", content: "Karelys Delicias · Sistema de mostrador" },
       {
         property: "og:description",
-        content: "POS y administración para Karelys Delicias: ventas, pedidos, inventario, clientes y caja.",
+        content:
+          "POS y administración para Karelys Delicias: ventas, pedidos, inventario, clientes y caja.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },

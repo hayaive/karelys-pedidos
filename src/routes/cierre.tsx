@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { IcoImprimir } from "@/chasis/iconos";
 import { useMemo, useState } from "react";
-import { Printer } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell, PageHead } from "@/components/app-shell";
 import { Badge, Btn, Card, CardHead, Empty, Field, Input, Textarea } from "@/components/ui-kit";
@@ -15,9 +15,15 @@ export const Route = createFileRoute("/cierre")({
   head: () => ({
     meta: [
       { title: "Ventas y cierre · Karelys Delicias" },
-      { name: "description", content: "Resumen diario de ventas por método de pago y cierre de caja." },
+      {
+        name: "description",
+        content: "Resumen diario de ventas por método de pago y cierre de caja.",
+      },
       { property: "og:title", content: "Ventas y cierre · Karelys Delicias" },
-      { property: "og:description", content: "Resumen diario de ventas por método de pago y cierre de caja." },
+      {
+        property: "og:description",
+        content: "Resumen diario de ventas por método de pago y cierre de caja.",
+      },
     ],
   }),
   component: () => (
@@ -37,7 +43,9 @@ function Cierre() {
   const closed = s.closures.find((c) => c.date === day);
 
   const recTotal = draft.byMethod.reduce(
-    (a, m) => a + (received[m.methodId] !== undefined ? parseFloat(received[m.methodId] || "0") : m.expected),
+    (a, m) =>
+      a +
+      (received[m.methodId] !== undefined ? parseFloat(received[m.methodId] || "0") : m.expected),
     0,
   );
   const diff = recTotal - draft.totalUsd;
@@ -49,9 +57,14 @@ function Cierre() {
         sub="Revisa el día y registra el cierre de caja"
         action={
           <div className="flex gap-2">
-            <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} className="w-44" />
+            <Input
+              type="date"
+              value={day}
+              onChange={(e) => setDay(e.target.value)}
+              className="w-44"
+            />
             <Btn onClick={() => window.print()}>
-              <Printer className="size-4" /> Imprimir
+              <IcoImprimir /> Imprimir
             </Btn>
           </div>
         }
@@ -79,7 +92,9 @@ function Cierre() {
             {draft.byMethod.map((m) => (
               <div key={m.methodId} className="flex items-center gap-3 px-4 py-2.5">
                 <span className="flex-1 text-sm">{m.methodName}</span>
-                <span className="num w-24 text-right text-sm text-muted-foreground">{usd(m.expected)}</span>
+                <span className="num w-24 text-right text-sm text-muted-foreground">
+                  {usd(m.expected)}
+                </span>
                 <Input
                   className="num w-28 text-right"
                   disabled={!!closed}
@@ -132,7 +147,9 @@ function Cierre() {
                         byMethod: draft.byMethod.map((m) => ({
                           ...m,
                           received:
-                            received[m.methodId] !== undefined ? parseFloat(received[m.methodId] || "0") : m.expected,
+                            received[m.methodId] !== undefined
+                              ? parseFloat(received[m.methodId] || "0")
+                              : m.expected,
                         })),
                         expectedUsd: draft.totalUsd,
                         receivedUsd: recTotal,
@@ -148,7 +165,9 @@ function Cierre() {
                   Registrar cierre
                 </Btn>
                 {draft.sales.length === 0 && (
-                  <p className="text-xs text-muted-foreground">No hay ventas en la fecha seleccionada.</p>
+                  <p className="text-xs text-muted-foreground">
+                    No hay ventas en la fecha seleccionada.
+                  </p>
                 )}
               </>
             )}

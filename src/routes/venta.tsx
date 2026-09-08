@@ -9,9 +9,15 @@ export const Route = createFileRoute("/venta")({
   head: () => ({
     meta: [
       { title: "Venta · Karelys Delicias" },
-      { name: "description", content: "Punto de venta: catálogo, carrito, multipagos y ticket 58mm." },
+      {
+        name: "description",
+        content: "Punto de venta: catálogo, carrito, multipagos y ticket 58mm.",
+      },
       { property: "og:title", content: "Venta · Karelys Delicias" },
-      { property: "og:description", content: "Punto de venta: catálogo, carrito, multipagos y ticket 58mm." },
+      {
+        property: "og:description",
+        content: "Punto de venta: catálogo, carrito, multipagos y ticket 58mm.",
+      },
     ],
   }),
   component: () => (

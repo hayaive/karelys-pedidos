@@ -83,6 +83,7 @@
   --color-rail-linea: var(--rail-linea);
   --color-rail-texto: var(--rail-texto);
   --color-rail-texto-2: var(--rail-texto-2);
+  --color-rail-texto-3: var(--rail-texto-3);
 
   /* Sombra — sólo para lo que flota. Lo que no flota lleva línea. */
   --shadow-1: var(--sombra-1); /* pegado */
@@ -123,7 +124,8 @@
   --rail-2: #1f1810;
   --rail-linea: #2e251a;
   --rail-texto: #f2eade;
-  --rail-texto-2: #9b8d7b;
+  --rail-texto-2: #c4b7a4;
+  --rail-texto-3: #9b8d7b;
 
   --sombra-1: 0 1px 2px rgba(22, 17, 11, 0.07);
   --sombra-2: 0 10px 28px -10px rgba(22, 17, 11, 0.22), 0 2px 6px rgba(22, 17, 11, 0.06);

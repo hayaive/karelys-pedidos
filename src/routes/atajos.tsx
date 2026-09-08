@@ -20,7 +20,10 @@ export const Route = createFileRoute("/atajos")({
       { title: "Atajos · Karelys Delicias" },
       { name: "description", content: "Atajos de teclado configurables del punto de venta." },
       { property: "og:title", content: "Atajos · Karelys Delicias" },
-      { property: "og:description", content: "Atajos de teclado configurables del punto de venta." },
+      {
+        property: "og:description",
+        content: "Atajos de teclado configurables del punto de venta.",
+      },
     ],
   }),
   component: () => (
@@ -95,9 +98,15 @@ function Atajos() {
                     className="num w-44 rounded-lg border border-sol bg-sup-2 px-2 py-1 text-center text-xs outline-none"
                   />
                 ) : (
-                  <kbd className="num rounded border border-border bg-sup-2 px-2 py-0.5 text-xs">{map[a.key]}</kbd>
+                  <kbd className="num rounded border border-border bg-sup-2 px-2 py-0.5 text-xs">
+                    {map[a.key]}
+                  </kbd>
                 )}
-                <Btn size="sm" variant="ghost" onClick={() => setCapturing(capturing === a.key ? null : a.key)}>
+                <Btn
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setCapturing(capturing === a.key ? null : a.key)}
+                >
                   {capturing === a.key ? "Cancelar" : "Cambiar"}
                 </Btn>
               </div>

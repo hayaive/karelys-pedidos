@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { IcoAlerta, IcoOjo, IcoOjoTachado } from "@/chasis/iconos";
 import { useEffect, useState } from "react";
-import { Eye, EyeOff, TriangleAlert } from "lucide-react";
 import { login, useSession } from "@/lib/auth";
 import { Logo, useHydrated } from "@/components/app-shell";
 import { Aviso, Btn, Field, Input } from "@/components/ui-kit";
@@ -80,16 +80,12 @@ function LoginPage() {
                   className="absolute right-1.5 top-1/2 grid size-7 -translate-y-1/2 place-items-center rounded-sm text-texto-3 transition-colors duration-[140ms] hover:bg-sup-2 hover:text-texto"
                   aria-label="Mostrar contraseña"
                 >
-                  {show ? (
-                    <EyeOff className="size-4" strokeWidth={1.75} />
-                  ) : (
-                    <Eye className="size-4" strokeWidth={1.75} />
-                  )}
+                  {show ? <IcoOjoTachado /> : <IcoOjo />}
                 </button>
               </div>
             </Field>
             {err && (
-              <Aviso tone="red" icon={TriangleAlert} title={err}>
+              <Aviso tone="red" icon={IcoAlerta} title={err}>
                 Revisa el usuario y la contraseña, o pídele acceso a un administrador.
               </Aviso>
             )}

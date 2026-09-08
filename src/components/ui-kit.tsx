@@ -1,6 +1,7 @@
 import { useEffect, type ReactNode } from "react";
+import { IcoCerrar } from "@/chasis/iconos";
+import type { Icono } from "@/chasis/iconos";
 import { createPortal } from "react-dom";
-import { X, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /* ═══════════════════════════════════════════════════════════
@@ -26,13 +27,17 @@ export function CardHead({
   title: string;
   sub?: string;
   action?: ReactNode;
-  icon?: LucideIcon;
+  icon?: Icono;
 }) {
   return (
     <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
       <div className="flex min-w-0 items-center gap-2">
         {/* Los iconos heredan el color del texto: nunca son ámbar fuera de un botón ámbar. */}
-        {Icon && <Icon className="size-4 shrink-0 text-texto-2" strokeWidth={1.75} />}
+        {Icon && (
+          <span className="flex-none text-texto-2">
+            <Icon />
+          </span>
+        )}
         <div className="min-w-0">
           <h4 className="truncate text-[0.95rem] font-semibold">{title}</h4>
           {sub && <p className="truncate text-etiqueta text-texto-2">{sub}</p>}
@@ -332,7 +337,7 @@ export function Aviso({
   tone?: "neutral" | "amber" | "green" | "red";
   title?: string;
   children?: ReactNode;
-  icon?: LucideIcon;
+  icon?: Icono;
 }) {
   return (
     <div
@@ -345,16 +350,17 @@ export function Aviso({
       )}
     >
       {Icon && (
-        <Icon
-          strokeWidth={1.75}
+        <span
           className={cn(
-            "mt-[0.1rem] size-4 shrink-0",
+            "mt-[0.1rem] flex-none",
             tone === "neutral" && "text-texto-2",
             tone === "amber" && "text-sol-70",
             tone === "green" && "text-verde",
             tone === "red" && "text-rojo",
           )}
-        />
+        >
+          <Icon />
+        </span>
       )}
       <div className="min-w-0">
         {title && <p className="text-[0.9rem] font-semibold">{title}</p>}
@@ -456,7 +462,7 @@ export function Modal({
             className="-mr-1 grid size-7 shrink-0 place-items-center rounded-sm text-texto-2 transition-colors hover:bg-sup-2 hover:text-texto"
             aria-label="Cerrar"
           >
-            <X className="size-4" strokeWidth={1.75} />
+            <IcoCerrar />
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-[1.2rem] pb-[1.1rem]">{children}</div>
@@ -485,7 +491,7 @@ export function Empty({
   title: string;
   sub?: string;
   action?: ReactNode;
-  icon?: LucideIcon;
+  icon?: Icono;
   variant?: "inicial" | "filtro" | "error";
 }) {
   return (
@@ -506,7 +512,7 @@ export function Empty({
             variant === "error" && "border border-rojo-linea text-rojo",
           )}
         >
-          <Icon className="size-5" strokeWidth={1.75} />
+          <Icon />
         </span>
       )}
       <h4 className="text-base font-semibold">{title}</h4>

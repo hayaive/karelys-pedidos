@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { Minus, Plus, Search, ShoppingCart, Trash2, UserPlus, X } from "lucide-react";
+import {
+  IcoBuscar,
+  IcoCerrar,
+  IcoMas,
+  IcoMenos,
+  IcoPapelera,
+  IcoPersonaMas,
+  IcoVenta,
+} from "@/chasis/iconos";
 import { toast } from "sonner";
 import { useAppState } from "@/lib/store";
 import {
@@ -175,7 +183,7 @@ export function POS({
           </div>
           <div className="flex items-center gap-1">
             <Btn size="sm" onClick={() => setQty(k, i.qty - 1)}>
-              <Minus className="size-3" />
+              <IcoMenos />
             </Btn>
             <input
               className={cn(inputCls, "num h-9 w-14 text-center")}
@@ -186,14 +194,14 @@ export function POS({
               }}
             />
             <Btn size="sm" onClick={() => setQty(k, i.qty + 1)}>
-              <Plus className="size-3" />
+              <IcoMas />
             </Btn>
           </div>
           <span className="num w-20 text-right text-sm font-semibold">
             {i.bsOnly ? bs((i.unitPriceBs ?? 0) * i.qty) : usd(i.subtotalUsd)}
           </span>
           <button onClick={() => setQty(k, 0)} className="text-muted-foreground hover:text-rojo">
-            <Trash2 className="size-4" />
+            <IcoPapelera />
           </button>
         </div>
       ))}
@@ -209,7 +217,7 @@ export function POS({
         {!lockedCustomer && (
           <Card className="p-4">
             <div className="mb-3 flex items-center gap-2">
-              <UserPlus className="size-4 text-sol" />
+              <IcoPersonaMas />
               <h2 className="text-sm font-semibold">Paso 1: Cliente</h2>
             </div>
             {customer ? (
@@ -224,13 +232,13 @@ export function POS({
                   onClick={() => setCustomer(null)}
                   className="text-muted-foreground hover:text-rojo"
                 >
-                  <X className="size-4" />
+                  <IcoCerrar />
                 </button>
               </div>
             ) : (
               <div className="space-y-2">
                 <div className="relative">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-texto-3" />
+                  <IcoBuscar />
                   <Input
                     id="cust-search"
                     className="pl-9"
@@ -281,7 +289,8 @@ export function POS({
                     </div>
                   )}
                 </div>
-                <div className="flex gap-2">
+                {/* En teléfono se apilan: «Registrar nuevo cliente» no cabe a media fila. */}
+                <div className="flex flex-col gap-2 sm:flex-row">
                   <Btn
                     className="flex-1"
                     onClick={() => {
@@ -293,7 +302,7 @@ export function POS({
                     Consumidor final
                   </Btn>
                   <Btn variant="amber" className="flex-1" onClick={() => setNewCustOpen(true)}>
-                    <UserPlus className="size-4" strokeWidth={1.75} /> Registrar nuevo cliente
+                    <IcoPersonaMas /> Registrar nuevo cliente
                   </Btn>
                 </div>
               </div>
@@ -304,7 +313,7 @@ export function POS({
         {/* Paso 2 · Productos */}
         <Card className="p-4">
           <div className="mb-3 flex items-center gap-2">
-            <ShoppingCart className="size-4 text-sol" />
+            <IcoVenta />
             <h2 className="text-sm font-semibold">
               {lockedCustomer ? "Productos" : "Paso 2: Productos"}
             </h2>
@@ -313,7 +322,7 @@ export function POS({
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
             <div className="relative flex-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-texto-3" />
+              <IcoBuscar />
               <Input
                 id="pos-search"
                 className="pl-9"
@@ -364,7 +373,7 @@ export function POS({
                     <span className="num w-24 shrink-0 text-right text-sm font-semibold text-sol-70">
                       {p.bsOnly ? num(p.bsPrice ?? 0) + " Bs" : usd(price ?? 0)}
                     </span>
-                    <Plus className="size-4 shrink-0 text-muted-foreground" />
+                    <IcoMas />
                   </button>
                 );
               })}
@@ -614,7 +623,7 @@ export function CustomerPickerBody({
         ))}
       </div>
       <Btn className="w-full" onClick={() => setNewMode(true)}>
-        <UserPlus className="size-4" /> Nuevo cliente
+        <IcoPersonaMas /> Nuevo cliente
       </Btn>
     </div>
   );
@@ -756,7 +765,7 @@ export function PaymentModal({
             </Field>
           )}
           <Btn className="w-full" onClick={addPayment}>
-            <Plus className="size-4" /> Agregar pago
+            <IcoMas /> Agregar pago
           </Btn>
         </div>
         <div className="flex flex-col">
@@ -786,7 +795,7 @@ export function PaymentModal({
                   onClick={() => setPayments(payments.filter((_, i) => i !== k))}
                   className="ml-2 text-muted-foreground hover:text-rojo"
                 >
-                  <Trash2 className="size-4" />
+                  <IcoPapelera />
                 </button>
               </div>
             ))}

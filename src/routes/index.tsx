@@ -2,7 +2,6 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
-  Boxes,
   CalendarClock,
   ChevronRight,
   CreditCard,
@@ -15,9 +14,9 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { AppShell, PageHead } from "@/components/app-shell";
 import { useSession } from "@/lib/auth";
-import { Badge, Btn, Card, CardHead, Empty } from "@/components/ui-kit";
+import { Badge, BarraProg, Btn, Card, CardHead, Cifra, Empty } from "@/components/ui-kit";
 import { useAppState } from "@/lib/store";
-import { bs, dayKey, longDate, num, time, usd } from "@/lib/format";
+import { bs, dayKey, num, time, usd } from "@/lib/format";
 import { currentRate } from "@/lib/business";
 import { cn } from "@/lib/utils";
 
@@ -67,7 +66,6 @@ function Dashboard() {
     return { h, v };
   });
   const maxHour = Math.max(1, ...byHour.map((x) => x.v));
-  const horaPico = byHour.reduce((a, x) => (x.v > a.v ? x : a), byHour[0]);
 
   const byMethod = s.paymentMethods.map((m) => ({
     ...m,
@@ -76,118 +74,98 @@ function Dashboard() {
       .filter((p) => p.methodId === m.id)
       .reduce((a, p) => a + p.usdEquivalent, 0),
   }));
-  const totalMetodos = Math.max(
-    0.0001,
-    byMethod.reduce((a, m) => a + m.total, 0),
-  );
+  const totalMetodos = byMethod.reduce((a, m) => a + m.total, 0);
 
   return (
     <>
-      <PageHead title="Buen día en el mostrador" sub={longDate()} />
+      <PageHead
+        title="Buen día en el mostrador"
+        sub="Lo que se ha cobrado hoy, lo que falta por entregar y lo que hay que reponer."
+      />
 
+      {/* La cifra del día va en ámbar, y no hay más de una por vista. */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Kpi
+        <CifraT
           label="Ventas de hoy"
-          value={usd(totalUsd)}
-          sub={`${sales.length} ventas · ${bs(totalUsd * rate)}`}
+          valor={usd(totalUsd)}
+          pie={`${sales.length} ventas · ${bs(totalUsd * rate)}`}
           icon={TrendingUp}
+          tone="sol"
         />
-        <Kpi
+        <CifraT
           label="Pedidos pendientes"
-          value={String(pending.length)}
-          sub="por atender"
+          valor={String(pending.length)}
+          pie="por atender"
           icon={CalendarClock}
         />
-        <Kpi
+        <CifraT
           label="Stock bajo"
-          value={String(low.length)}
-          sub="productos"
+          valor={String(low.length)}
+          pie="productos"
           icon={PackageSearch}
-          tone={low.length ? "red" : "neutral"}
+          alerta={low.length > 0}
         />
-        <Kpi label="Caja actual" value={usd(cash)} sub="efectivo USD + Bs" icon={Wallet} />
+        <CifraT label="Caja actual" valor={usd(cash)} pie="efectivo USD + Bs" icon={Wallet} />
       </div>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-[1.4fr_1fr]">
-        <Card destacada>
-          <CardHead
-            title="Ventas del día"
-            sub="Por hora, equivalente en USD"
-            icon={TrendingUp}
-            action={
-              totalUsd > 0 ? (
-                <span className="num hidden text-xs text-texto-3 sm:block">
-                  pico {horaPico.h}:00
-                </span>
-              ) : undefined
-            }
-          />
-          <div className="relative px-4 pb-4 pt-5">
-            {totalUsd > 0 && (
-              <div className="rotulo num absolute right-4 top-2">{usd(maxHour)}</div>
-            )}
-            {totalUsd === 0 && (
-              <p className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-4 text-center text-xs text-texto-3">
+      <div className="mt-4 grid gap-4 lg:grid-cols-[1.7fr_1fr]">
+        <Card>
+          <CardHead title="Ventas del día" sub="Por hora, equivalente en USD" icon={TrendingUp} />
+          <div className="px-4 pb-4 pt-5">
+            {totalUsd === 0 ? (
+              <p className="flex h-28 items-center justify-center text-etiqueta text-texto-3">
                 Todavía no hay ventas hoy
               </p>
-            )}
-            <div className="flex h-40 items-end gap-1.5 border-b border-dashed border-border">
-              {byHour.map((x) => (
-                <div key={x.h} className="group flex h-full flex-1 flex-col justify-end gap-1">
-                  <div
-                    className={cn(
-                      "crece w-full rounded-t-sm transition-opacity",
-                      x.v
-                        ? "bg-gradient-to-t from-sol-90 to-sol group-hover:opacity-80"
-                        : "bg-linea group-hover:bg-linea-2",
-                    )}
-                    style={{ height: `${Math.max(2, (x.v / maxHour) * 130)}px` }}
-                    title={`${x.h}:00 · ${usd(x.v)}`}
-                  />
+            ) : (
+              <>
+                <div className="flex h-28 items-end gap-[0.35rem]">
+                  {byHour.map((x) => (
+                    <div
+                      key={x.h}
+                      title={`${x.h}:00 · ${usd(x.v)}`}
+                      className={cn(
+                        "min-h-[2px] flex-1 rounded-t-sm",
+                        x.v === maxHour ? "bg-sol" : "bg-sol-luz",
+                      )}
+                      style={{ height: `${(x.v / maxHour) * 100}%` }}
+                    />
+                  ))}
                 </div>
-              ))}
-            </div>
-            <div className="mt-1.5 flex gap-1.5">
-              {byHour.map((x) => (
-                <span
-                  key={x.h}
-                  className={cn(
-                    "num flex-1 text-center text-[9px]",
-                    x.v ? "text-texto-2" : "text-texto-3",
-                  )}
-                >
-                  {x.h}
-                </span>
-              ))}
-            </div>
+                <div className="mt-[0.35rem] flex gap-[0.35rem]">
+                  {byHour.map((x) => (
+                    <span key={x.h} className="num flex-1 text-center text-[0.68rem] text-texto-3">
+                      {x.h}
+                    </span>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </Card>
 
         <Card>
           <CardHead title="Métodos de pago" sub="Hoy" icon={CreditCard} />
           <div className="divide-y divide-border">
-            {byMethod.map((m) => {
-              const parte = m.total / totalMetodos;
-              return (
-                <div key={m.id} className="px-4 py-2.5">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="truncate text-sm">{m.name}</span>
-                    <span className="num shrink-0 text-sm font-medium">{usd(m.total)}</span>
-                  </div>
-                  <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-sup-2">
-                    <div
-                      className="h-full rounded-full bg-sol transition-all duration-500"
-                      style={{ width: `${Math.round(parte * 100)}%`, opacity: m.total ? 1 : 0 }}
-                    />
-                  </div>
+            {byMethod.map((m) => (
+              <div key={m.id} className="px-4 py-[0.6rem]">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="truncate text-etiqueta">{m.name}</span>
+                  <Cifra size="sm" className="shrink-0">
+                    {usd(m.total)}
+                  </Cifra>
                 </div>
-              );
-            })}
+                {totalMetodos > 0 && (
+                  <div className="mt-[0.4rem]">
+                    <BarraProg fina valor={(m.total / totalMetodos) * 100} />
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         </Card>
       </div>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-[1.4fr_1fr]">
+      <div className="mt-4 grid gap-4 lg:grid-cols-[1.7fr_1fr]">
         <Card>
           <CardHead
             title="Pedidos pendientes"
@@ -195,38 +173,38 @@ function Dashboard() {
             action={
               <Link
                 to="/pedidos"
-                className="inline-flex items-center gap-1 text-xs text-sol-70 transition-colors hover:text-sol"
+                className="inline-flex items-center gap-1 text-etiqueta text-sol-70 hover:underline"
               >
-                Ver todos <ChevronRight className="size-3.5" />
+                Ver todos <ChevronRight className="size-4" strokeWidth={1.75} />
               </Link>
             }
           />
           {pending.length === 0 ? (
-            <Empty
-              icon={CalendarClock}
-              title="Sin pedidos pendientes"
-              sub="Los pedidos por WhatsApp aparecerán aquí."
-            />
+            <div className="p-4">
+              <Empty
+                icon={CalendarClock}
+                title="Sin pedidos pendientes"
+                sub="Los pedidos que entren por WhatsApp aparecerán aquí para montarlos y entregarlos."
+              />
+            </div>
           ) : (
             <div className="divide-y divide-border">
               {pending.slice(0, 6).map((o) => (
                 <div
                   key={o.id}
-                  className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-sup-2"
+                  className="flex items-center gap-3 px-4 py-[0.6rem] transition-colors duration-[140ms] hover:bg-sup-2"
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">
+                    <p className="truncate text-etiqueta font-[550]">
                       <span className="num text-texto-2">{o.number}</span> · {o.customerName}
                     </p>
-                    <p className="num text-xs text-muted-foreground">
+                    <p className="num text-[0.79rem] text-texto-2">
                       {time(o.createdAt)} · {usd(o.totalUsd)}
                     </p>
                   </div>
-                  <Badge dot tone={o.status === "listo" ? "green" : "amber"}>
-                    {o.status}
-                  </Badge>
+                  <Badge tone={o.status === "listo" ? "green" : "amber"}>{o.status}</Badge>
                   {can("process_orders") && (
-                    <Btn size="sm" variant="amber" onClick={() => navigate({ to: "/pedidos" })}>
+                    <Btn size="sm" onClick={() => navigate({ to: "/pedidos" })}>
                       Procesar
                     </Btn>
                   )}
@@ -257,74 +235,70 @@ function Dashboard() {
         </Card>
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-2.5 rounded-lg border border-border bg-sup-2/60 px-3.5 py-2.5 text-xs text-texto-3">
-        <Boxes className="size-3.5 text-sol" />
+      <p className="mt-4 flex flex-wrap items-center gap-2 text-[0.79rem] text-texto-3">
         <span className="num">
           {s.products.length} productos · tasa BCV {num(rate)} Bs/USD
         </span>
-        <Link
-          to="/atajos"
-          className="ml-auto text-sol-70 transition-colors hover:text-sol hover:underline"
-        >
+        <Link to="/atajos" className="ml-auto text-sol-70 hover:underline">
           Ver atajos de teclado
         </Link>
-      </div>
+      </p>
     </>
   );
 }
 
-function Kpi({
+/* Tarjeta de cifra — sólo para números que de verdad son el asunto
+   de la pantalla. La ámbar es la cifra del día. */
+function CifraT({
   label,
-  value,
-  sub,
+  valor,
+  pie,
   icon: Icon,
-  tone = "neutral",
+  tone = "papel",
+  alerta,
 }: {
   label: string;
-  value: string;
-  sub?: string;
+  valor: string;
+  pie?: string;
   icon?: LucideIcon;
-  tone?: "neutral" | "red";
+  tone?: "papel" | "sol";
+  alerta?: boolean;
 }) {
+  const sol = tone === "sol";
   return (
-    <Card alza className="p-4">
-      <div className="flex items-start justify-between gap-2">
-        <p className="rotulo">{label}</p>
-        {Icon && (
-          <span
-            className={cn(
-              "grid size-7 shrink-0 place-items-center rounded-md border",
-              tone === "red"
-                ? "border-rojo-linea bg-rojo-luz text-rojo"
-                : "border-sol-luz bg-sol-vela text-sol-70",
-            )}
-          >
-            <Icon className="size-3.5" />
-          </span>
-        )}
-      </div>
+    <div
+      className={cn(
+        "flex flex-col gap-[0.35rem] rounded-lg border px-[1.15rem] py-[1.05rem]",
+        sol ? "border-sol bg-sol text-noche" : "border-border bg-card",
+      )}
+    >
       <p
         className={cn(
-          "num mt-2 text-2xl font-semibold tracking-tight",
-          tone === "red" && "text-rojo",
+          "flex items-center gap-[0.4rem] text-[0.82rem]",
+          sol ? "text-noche/70" : "text-texto-2",
         )}
       >
-        {value}
+        {Icon && <Icon className="size-4 shrink-0" strokeWidth={1.75} />}
+        {label}
       </p>
-      {sub && <p className="num mt-0.5 text-[11px] text-texto-3">{sub}</p>}
-    </Card>
+      <Cifra size="lg" className={cn(alerta && !sol && "text-rojo")}>
+        {valor}
+      </Cifra>
+      {pie && (
+        <p className={cn("num text-[0.78rem]", sol ? "text-noche/70" : "text-texto-3")}>{pie}</p>
+      )}
+    </div>
   );
 }
 
+/* Rejilla de un toque: el hover marca el borde ámbar, no el icono. */
 function Quick({ to, icon: Icon, label }: { to: string; icon: LucideIcon; label: string }) {
   return (
     <Link
       to={to}
-      className="group flex items-center gap-2.5 rounded-md border border-border bg-card px-3 py-2.5 text-sm shadow-sutil transition-all duration-200 hover:-translate-y-0.5 hover:border-sol hover:bg-sol-vela hover:shadow-alza"
+      className="flex min-h-10 items-center gap-[0.6rem] rounded-md border border-border bg-card px-3 py-[0.55rem] text-etiqueta text-texto transition-[border-color,background-color] duration-[120ms] hover:border-sol hover:bg-sol-vela active:translate-y-px"
     >
-      <span className="grid size-7 shrink-0 place-items-center rounded-md border border-sol-luz bg-sol-vela text-sol-70 transition-colors group-hover:border-sol group-hover:bg-sol group-hover:text-noche">
-        <Icon className="size-3.5" />
-      </span>
+      <Icon className="size-4 shrink-0 text-texto-2" strokeWidth={1.75} />
       <span className="min-w-0 truncate">{label}</span>
     </Link>
   );

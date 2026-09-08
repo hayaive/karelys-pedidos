@@ -41,9 +41,11 @@ export function POS({
   const [items, setItems] = useState<LineItem[]>(initialItems ?? []);
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("all");
-  const [priceTypeId, setPriceTypeId] = useState(s.priceTypes.find((p) => p.isDefault)?.id ?? s.priceTypes[0]?.id);
-  const [customer, setCustomer] = useState<Customer | null>(
-    () => (initialCustomerId ? s.customers.find((c) => c.id === initialCustomerId) ?? null : null),
+  const [priceTypeId, setPriceTypeId] = useState(
+    s.priceTypes.find((p) => p.isDefault)?.id ?? s.priceTypes[0]?.id,
+  );
+  const [customer, setCustomer] = useState<Customer | null>(() =>
+    initialCustomerId ? (s.customers.find((c) => c.id === initialCustomerId) ?? null) : null,
   );
   const lockedCustomer = !!orderId;
   const checkoutOnly = !!orderId; // Procesar pedido: solo cobrar, sin catálogo
@@ -55,7 +57,6 @@ export function POS({
   const [newCustOpen, setNewCustOpen] = useState(false);
   const [customizeFor, setCustomizeFor] = useState<Product | null>(null);
   const [lastSale, setLastSale] = useState<Sale | null>(null);
-
 
   const products = useMemo(
     () =>
@@ -86,7 +87,6 @@ export function POS({
     },
   });
 
-
   function add(p: Product, customization?: string) {
     if (p.allowCustomization && customization === undefined && !customizeFor) {
       setCustomizeFor(p);
@@ -103,7 +103,9 @@ export function POS({
     const extra = customization ? (p.customizationPrice ?? 0) : 0;
     setItems((prev) => {
       const key = p.id + "|" + priceTypeId + "|" + (customization ?? "");
-      const idx = prev.findIndex((i) => i.productId + "|" + i.priceTypeId + "|" + (i.customization ?? "") === key);
+      const idx = prev.findIndex(
+        (i) => i.productId + "|" + i.priceTypeId + "|" + (i.customization ?? "") === key,
+      );
       if (idx >= 0) {
         const copy = [...prev];
         const it = { ...copy[idx], qty: copy[idx].qty + 1 };
@@ -144,7 +146,12 @@ export function POS({
 
   function saveOrder() {
     if (!items.length) return toast.error("Agrega productos al pedido");
-    createOrder({ items, customerId: customer?.id ?? null, customerName: customer?.name ?? "Consumidor final", note });
+    createOrder({
+      items,
+      customerId: customer?.id ?? null,
+      customerName: customer?.name ?? "Consumidor final",
+      note,
+    });
     toast.success("Pedido registrado como pendiente");
     setItems([]);
     setCustomer(null);
@@ -160,7 +167,10 @@ export function POS({
             <p className="truncate text-sm font-medium">{i.name}</p>
             {i.customization && <p className="text-xs text-sol-70">{i.customization}</p>}
             <p className="num text-xs text-muted-foreground">
-              {i.bsOnly ? bs(i.unitPriceBs ?? 0) : usd(i.unitPriceUsd + (i.customizationPrice ?? 0))} × {i.qty} und
+              {i.bsOnly
+                ? bs(i.unitPriceBs ?? 0)
+                : usd(i.unitPriceUsd + (i.customizationPrice ?? 0))}{" "}
+              × {i.qty} und
             </p>
           </div>
           <div className="flex items-center gap-1">
@@ -191,110 +201,116 @@ export function POS({
   );
 
   return (
-    <div className={cn("grid gap-4", checkoutOnly ? "mx-auto max-w-md" : "lg:grid-cols-[1fr_380px]")}>
+    <div
+      className={cn("grid gap-4", checkoutOnly ? "mx-auto max-w-md" : "lg:grid-cols-[1fr_380px]")}
+    >
       <div className={cn("min-w-0 space-y-4", checkoutOnly && "hidden")}>
         {/* Paso 1 · Cliente */}
         {!lockedCustomer && (
-        <Card className="p-4">
-          <div className="mb-3 flex items-center gap-2">
-            <UserPlus className="size-4 text-sol" />
-            <h2 className="text-sm font-semibold">Paso 1: Cliente</h2>
-          </div>
-          {customer ? (
-            <div className="flex items-center gap-3 rounded-md border border-verde/30 bg-verde/10 px-3 py-2.5">
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold uppercase">{customer.name}</p>
-                <p className="num text-xs text-muted-foreground">
-                  {customer.cedula} · {customer.phone || "S/NUM"}
-                </p>
-              </div>
-              <button onClick={() => setCustomer(null)} className="text-muted-foreground hover:text-rojo">
-                <X className="size-4" />
-              </button>
+          <Card className="p-4">
+            <div className="mb-3 flex items-center gap-2">
+              <UserPlus className="size-4 text-sol" />
+              <h2 className="text-sm font-semibold">Paso 1: Cliente</h2>
             </div>
-          ) : (
-            <div className="space-y-2">
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-texto-3" />
-                <Input
-                  id="cust-search"
-                  className="pl-9"
-                  placeholder={`Buscar cliente por nombre o cédula (${sc.search_customer})`}
-                  value={custQ}
-                  onFocus={() => setCustFocus(true)}
-                  onBlur={() => setTimeout(() => setCustFocus(false), 150)}
-                  onChange={(e) => setCustQ(e.target.value)}
-                />
-                {custFocus && custQ.trim() !== "" && (
-                  <div className="absolute inset-x-0 top-full z-20 mt-1 max-h-64 overflow-y-auto rounded-md border border-border bg-card shadow-md">
-                    {(() => {
-                      const norm = (t: string) =>
-                        t
-                          .toLowerCase()
-                          .normalize("NFD")
-                          .replace(/[̀-ͯ]/g, "");
-                      const term = norm(custQ.trim());
-                      const matches = s.customers
-                        .filter(
-                          (c) =>
-                            c.active &&
-                            (norm(c.name).includes(term) || norm(c.cedula).includes(term)),
-                        )
-                        .slice(0, 20);
-                      if (matches.length === 0) {
-                        return (
-                          <p className="px-3 py-3 text-sm text-muted-foreground">
-                            Sin coincidencias. Registra un cliente nuevo abajo.
-                          </p>
-                        );
-                      }
-                      return matches.map((c) => (
-                        <button
-                          key={c.id}
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            setCustomer(c);
-                            setCustQ("");
-                            setCustFocus(false);
-                          }}
-                          className="flex w-full items-center justify-between gap-2 border-b border-border px-3 py-2.5 text-left text-sm last:border-b-0 hover:bg-sol-vela"
-                        >
-                          <span className="min-w-0 truncate font-medium uppercase">{c.name}</span>
-                          <span className="num shrink-0 text-xs text-muted-foreground">{c.cedula}</span>
-                        </button>
-                      ));
-                    })()}
-                  </div>
-                )}
-              </div>
-              <div className="flex gap-2">
+            {customer ? (
+              <div className="flex items-center gap-3 rounded-md border border-verde/30 bg-verde/10 px-3 py-2.5">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold uppercase">{customer.name}</p>
+                  <p className="num text-xs text-muted-foreground">
+                    {customer.cedula} · {customer.phone || "S/NUM"}
+                  </p>
+                </div>
                 <button
-                  onClick={() => {
-                    setCustomer(null);
-                    setCustQ("");
-                    setCustFocus(false);
-                  }}
-                  className="flex flex-1 items-center justify-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-sm text-muted-foreground hover:bg-surface-2"
+                  onClick={() => setCustomer(null)}
+                  className="text-muted-foreground hover:text-rojo"
                 >
-                  Consumidor final
-                </button>
-                <button
-                  onClick={() => setNewCustOpen(true)}
-                  className="flex flex-1 items-center justify-center gap-2 rounded-md border border-sol/40 bg-sol/5 px-3 py-2 text-sm font-medium text-sol hover:bg-sol/10"
-                >
-                  <UserPlus className="size-4" /> Registrar nuevo cliente
+                  <X className="size-4" />
                 </button>
               </div>
-            </div>
-          )}
-        </Card>
+            ) : (
+              <div className="space-y-2">
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-texto-3" />
+                  <Input
+                    id="cust-search"
+                    className="pl-9"
+                    placeholder={`Buscar cliente por nombre o cédula (${sc.search_customer})`}
+                    value={custQ}
+                    onFocus={() => setCustFocus(true)}
+                    onBlur={() => setTimeout(() => setCustFocus(false), 150)}
+                    onChange={(e) => setCustQ(e.target.value)}
+                  />
+                  {custFocus && custQ.trim() !== "" && (
+                    <div className="absolute inset-x-0 top-full z-20 mt-1 max-h-64 overflow-y-auto rounded-md border border-border bg-card shadow-md">
+                      {(() => {
+                        const norm = (t: string) =>
+                          t.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+                        const term = norm(custQ.trim());
+                        const matches = s.customers
+                          .filter(
+                            (c) =>
+                              c.active &&
+                              (norm(c.name).includes(term) || norm(c.cedula).includes(term)),
+                          )
+                          .slice(0, 20);
+                        if (matches.length === 0) {
+                          return (
+                            <p className="px-3 py-3 text-sm text-muted-foreground">
+                              Sin coincidencias. Registra un cliente nuevo abajo.
+                            </p>
+                          );
+                        }
+                        return matches.map((c) => (
+                          <button
+                            key={c.id}
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              setCustomer(c);
+                              setCustQ("");
+                              setCustFocus(false);
+                            }}
+                            className="flex w-full items-center justify-between gap-2 border-b border-border px-3 py-2.5 text-left text-sm last:border-b-0 hover:bg-sol-vela"
+                          >
+                            <span className="min-w-0 truncate font-medium uppercase">{c.name}</span>
+                            <span className="num shrink-0 text-xs text-muted-foreground">
+                              {c.cedula}
+                            </span>
+                          </button>
+                        ));
+                      })()}
+                    </div>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      setCustomer(null);
+                      setCustQ("");
+                      setCustFocus(false);
+                    }}
+                    className="flex flex-1 items-center justify-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-sm text-muted-foreground hover:bg-surface-2"
+                  >
+                    Consumidor final
+                  </button>
+                  <button
+                    onClick={() => setNewCustOpen(true)}
+                    className="flex flex-1 items-center justify-center gap-2 rounded-md border border-sol/40 bg-sol/5 px-3 py-2 text-sm font-medium text-sol hover:bg-sol/10"
+                  >
+                    <UserPlus className="size-4" /> Registrar nuevo cliente
+                  </button>
+                </div>
+              </div>
+            )}
+          </Card>
         )}
 
         {/* Paso 2 · Productos */}
         <Card className="p-4">
           <div className="mb-3 flex items-center gap-2">
             <ShoppingCart className="size-4 text-sol" />
-            <h2 className="text-sm font-semibold">{lockedCustomer ? "Productos" : "Paso 2: Productos"}</h2>
+            <h2 className="text-sm font-semibold">
+              {lockedCustomer ? "Productos" : "Paso 2: Productos"}
+            </h2>
 
             <span className="num ml-auto text-xs text-muted-foreground">{items.length} líneas</span>
           </div>
@@ -309,7 +325,11 @@ export function POS({
                 onChange={(e) => setQ(e.target.value)}
               />
             </div>
-            <Select value={priceTypeId} onChange={(e) => setPriceTypeId(e.target.value)} className="sm:w-40">
+            <Select
+              value={priceTypeId}
+              onChange={(e) => setPriceTypeId(e.target.value)}
+              className="sm:w-40"
+            >
               {s.priceTypes.map((p) => (
                 <option key={p.id} value={p.id}>
                   Precio {p.name}
@@ -339,7 +359,9 @@ export function POS({
                     onClick={() => add(p)}
                     className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-sol-vela"
                   >
-                    <span className="num w-16 shrink-0 text-xs text-muted-foreground">{p.code}</span>
+                    <span className="num w-16 shrink-0 text-xs text-muted-foreground">
+                      {p.code}
+                    </span>
                     <span className="min-w-0 flex-1 truncate text-sm font-medium">{p.name}</span>
                     {low && <Badge tone="red">{p.stock}</Badge>}
                     <span className="num w-24 shrink-0 text-right text-sm font-semibold text-sol-70">
@@ -372,7 +394,9 @@ export function POS({
 
       {/* Resumen */}
       <Card className="p-4 lg:sticky lg:top-20 lg:self-start">
-        <h2 className="voz mb-3 text-base">{mode === "order" ? "Resumen del pedido" : "Resumen de la venta"}</h2>
+        <h2 className="mb-3 text-[0.95rem] font-semibold">
+          {mode === "order" ? "Resumen del pedido" : "Resumen de la venta"}
+        </h2>
         <div className="border-t border-border py-3">
           <p className="text-xs text-muted-foreground">Cliente</p>
           <p className="truncate text-sm font-semibold uppercase">{displayCustomerName}</p>
@@ -423,7 +447,6 @@ export function POS({
         </Btn>
       </Card>
 
-
       <Modal open={newCustOpen} onClose={() => setNewCustOpen(false)} title="Nuevo cliente">
         <CustomerPickerBody
           startNew
@@ -470,7 +493,11 @@ export function POS({
         }}
       />
 
-      <Modal open={!!lastSale} onClose={() => setLastSale(null)} title={"Venta " + (lastSale?.number ?? "")}>
+      <Modal
+        open={!!lastSale}
+        onClose={() => setLastSale(null)}
+        title={"Venta " + (lastSale?.number ?? "")}
+      >
         {lastSale && <TicketPreview sale={lastSale} />}
       </Modal>
     </div>
@@ -494,7 +521,11 @@ function CustomizeForm({
         La personalización agrega {usd(product.customizationPrice ?? 0)} al precio según el modelo.
       </p>
       <Field label="Modelo / mensaje">
-        <Input value={txt} onChange={(e) => setTxt(e.target.value)} placeholder="Ej: Modelo unicornio, Feliz cumple Ana" />
+        <Input
+          value={txt}
+          onChange={(e) => setTxt(e.target.value)}
+          placeholder="Ej: Modelo unicornio, Feliz cumple Ana"
+        />
       </Field>
       <div className="flex justify-end gap-2">
         <Btn onClick={onSkip}>Sin personalización</Btn>
@@ -506,7 +537,13 @@ function CustomizeForm({
   );
 }
 
-export function CustomerPickerBody({ onPick, startNew = false }: { onPick: (c: Customer | null) => void; startNew?: boolean }) {
+export function CustomerPickerBody({
+  onPick,
+  startNew = false,
+}: {
+  onPick: (c: Customer | null) => void;
+  startNew?: boolean;
+}) {
   const s = useAppState();
   const [q, setQ] = useState("");
   const [newMode, setNewMode] = useState(startNew);
@@ -518,7 +555,10 @@ export function CustomerPickerBody({ onPick, startNew = false }: { onPick: (c: C
     return (
       <div className="space-y-3">
         <Field label="Cédula" hint="Formato V-12345678">
-          <Input value={form.cedula} onChange={(e) => setForm({ ...form, cedula: e.target.value })} />
+          <Input
+            value={form.cedula}
+            onChange={(e) => setForm({ ...form, cedula: e.target.value })}
+          />
         </Field>
         <Field label="Nombre">
           <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
@@ -527,7 +567,10 @@ export function CustomerPickerBody({ onPick, startNew = false }: { onPick: (c: C
           <Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
         </Field>
         <Field label="Dirección">
-          <Input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
+          <Input
+            value={form.address}
+            onChange={(e) => setForm({ ...form, address: e.target.value })}
+          />
         </Field>
         <div className="flex justify-end gap-2">
           <Btn onClick={() => setNewMode(false)}>Volver</Btn>
@@ -550,7 +593,11 @@ export function CustomerPickerBody({ onPick, startNew = false }: { onPick: (c: C
     );
   return (
     <div className="space-y-3">
-      <Input placeholder="Buscar por cédula o nombre" value={q} onChange={(e) => setQ(e.target.value)} />
+      <Input
+        placeholder="Buscar por cédula o nombre"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+      />
       <div className="max-h-64 space-y-1 overflow-y-auto">
         <button
           onClick={() => onPick(null)}
@@ -592,7 +639,6 @@ export function CustomerPicker({
   );
 }
 
-
 export function PaymentModal({
   open,
   onClose,
@@ -632,7 +678,8 @@ export function PaymentModal({
     if (!method) return;
     const val = parseAmount(amount);
     if (!Number.isFinite(val) || val <= 0) return toast.error("Monto inválido");
-    if (method.requiresReference && !reference.trim()) return toast.error("Esta forma de pago requiere referencia");
+    if (method.requiresReference && !reference.trim())
+      return toast.error("Esta forma de pago requiere referencia");
     const usdEq = method.currency === "USD" ? val : rate ? val / rate : 0;
     setPayments([
       ...payments,
@@ -718,15 +765,24 @@ export function PaymentModal({
         <div className="flex flex-col">
           <p className="mb-2 text-xs font-medium text-muted-foreground">Pagos registrados</p>
           <div className="flex-1 space-y-1.5">
-            {payments.length === 0 && <p className="text-sm text-muted-foreground">Aún no hay pagos</p>}
+            {payments.length === 0 && (
+              <p className="text-sm text-muted-foreground">Aún no hay pagos</p>
+            )}
             {payments.map((p, k) => (
-              <div key={k} className="flex items-center justify-between rounded-md border border-border px-3 py-2">
+              <div
+                key={k}
+                className="flex items-center justify-between rounded-md border border-border px-3 py-2"
+              >
                 <div>
                   <p className="text-sm">{p.methodName}</p>
-                  {p.reference && <p className="text-xs text-muted-foreground">Ref. {p.reference}</p>}
+                  {p.reference && (
+                    <p className="text-xs text-muted-foreground">Ref. {p.reference}</p>
+                  )}
                 </div>
                 <div className="text-right">
-                  <p className="num text-sm">{p.currency === "USD" ? usd(p.amount) : bs(p.amount)}</p>
+                  <p className="num text-sm">
+                    {p.currency === "USD" ? usd(p.amount) : bs(p.amount)}
+                  </p>
                   <p className="num text-[11px] text-muted-foreground">≈ {usd(p.usdEquivalent)}</p>
                 </div>
                 <button
@@ -756,19 +812,33 @@ export function PaymentModal({
 function Row({ l, r, strong }: { l: string; r: string; strong?: boolean }) {
   return (
     <div className="flex items-center justify-between">
-      <span className={cn("text-sm", strong ? "font-medium text-foreground" : "text-muted-foreground")}>{l}</span>
+      <span
+        className={cn("text-sm", strong ? "font-medium text-foreground" : "text-muted-foreground")}
+      >
+        {l}
+      </span>
       <span className={cn("num text-sm", strong && "font-semibold")}>{r}</span>
     </div>
   );
 }
 
-function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+function Chip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
   return (
     <button
       onClick={onClick}
       className={cn(
         "shrink-0 rounded-full border px-3 py-1 text-xs transition-colors",
-        active ? "border-sol bg-sol-vela text-sol-70" : "border-border text-muted-foreground hover:bg-secondary",
+        active
+          ? "border-sol bg-sol-vela text-sol-70"
+          : "border-border text-muted-foreground hover:bg-secondary",
       )}
     >
       {children}
@@ -783,9 +853,10 @@ function parseAmount(raw: string): number {
   const hasDot = t.includes(".");
   let norm = t;
   if (hasComma && hasDot) {
-    norm = t.lastIndexOf(",") > t.lastIndexOf(".")
-      ? t.replace(/\./g, "").replace(",", ".")
-      : t.replace(/,/g, "");
+    norm =
+      t.lastIndexOf(",") > t.lastIndexOf(".")
+        ? t.replace(/\./g, "").replace(",", ".")
+        : t.replace(/,/g, "");
   } else if (hasComma) {
     norm = t.replace(",", ".");
   } else if (hasDot) {

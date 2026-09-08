@@ -6,14 +6,20 @@
 
 /* ═══════════════════════════════════════════════════════════
    SISTEMA ÁMBAR — HAYAI para Karelys Delicias
-   Ámbar es la acción. Noche es el chrome. El fondo es blanco.
+   Ámbar es la acción. Noche es el chrome. Tinta es la voz.
+   El fondo es blanco. Cal queda retirado.
+
+   Esta hoja es la traducción de design-system.html. No se
+   inventan tokens: si algo no está en el lineamiento, no está
+   aquí.
    ═══════════════════════════════════════════════════════════ */
 
 @theme inline {
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 18px;
+  /* Esquinas — el mostrador es sólido, no burbujeante */
+  --radius-sm: 4px; /* r1 · chip cuadrado */
+  --radius-md: 8px; /* r2 · botón, campo */
+  --radius-lg: 12px; /* r3 · tarjeta, tabla */
+  --radius-xl: 18px; /* r4 · ventana */
   --radius-2xl: 18px;
   --radius-3xl: 18px;
   --radius-4xl: 18px;
@@ -21,6 +27,16 @@
   --font-sans: "Geist", "Segoe UI", system-ui, -apple-system, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
   --font-voz: "Fraunces", Georgia, "Times New Roman", serif;
+
+  /* Escala — nueve pasos sobre una base de 15 px */
+  --text-dia: 2.6rem; /* la cifra del día */
+  --text-seccion: 1.85rem; /* título de sección */
+  --text-pantalla: 1.3rem; /* título de pantalla */
+  --text-voz: 1.05rem; /* la descripción en Tinta */
+  --text-control: 0.93rem; /* botones y campos */
+  --text-etiqueta: 0.85rem; /* etiquetas y ayudas */
+  --text-chip: 0.78rem; /* chips y cabeceras de tabla */
+  --text-rotulo: 0.72rem; /* rótulos de gráfico */
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -68,12 +84,13 @@
   --color-rail-texto: var(--rail-texto);
   --color-rail-texto-2: var(--rail-texto-2);
 
-  --shadow-sutil: 0 1px 2px rgba(22, 17, 11, 0.07);
-  --shadow-flota: 0 10px 28px -10px rgba(22, 17, 11, 0.22), 0 2px 6px rgba(22, 17, 11, 0.06);
-  --shadow-alza: 0 16px 36px -16px rgba(22, 17, 11, 0.3), 0 3px 10px rgba(22, 17, 11, 0.07);
-  --shadow-sol: 0 6px 18px -8px rgba(239, 157, 37, 0.55);
+  /* Sombra — sólo para lo que flota. Lo que no flota lleva línea. */
+  --shadow-1: var(--sombra-1); /* pegado */
+  --shadow-2: var(--sombra-2); /* menú, globo */
+  --shadow-3: var(--sombra-3); /* ventana */
 
-  --ease-suave: cubic-bezier(0.22, 1, 0.36, 1);
+  /* Movimiento — corto y funcional */
+  --ease-menu: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 :root {
@@ -108,6 +125,11 @@
   --rail-texto: #f2eade;
   --rail-texto-2: #9b8d7b;
 
+  --sombra-1: 0 1px 2px rgba(22, 17, 11, 0.07);
+  --sombra-2: 0 10px 28px -10px rgba(22, 17, 11, 0.22), 0 2px 6px rgba(22, 17, 11, 0.06);
+  --sombra-3: 0 30px 70px -18px rgba(22, 17, 11, 0.38), 0 4px 12px rgba(22, 17, 11, 0.1);
+  --foco: 0 0 0 3px rgba(239, 157, 37, 0.42);
+
   --foreground: var(--texto);
   --card: #ffffff;
   --card-foreground: var(--texto);
@@ -130,29 +152,37 @@
 
 .dark {
   --background: #16110b;
+  --card: #1d1710;
   --sup-2: #241d15;
   --sup-3: #2e251a;
   --linea: #332a1f;
   --linea-2: #473b2c;
+
   --texto: #f7f2ea;
   --texto-2: #b2a594;
   --texto-3: #857a6a;
   --tinta: #dfaa9c;
+
   --sol-luz: #4b3312;
   --sol-vela: #2a1e0e;
   --sol-70: #f5b655;
 
-  --verde-luz: #12291f;
-  --verde-linea: #24503c;
-  --rojo-luz: #2c150f;
-  --rojo-linea: #5a2618;
+  --verde: #5dc094;
+  --verde-luz: #152720;
+  --verde-linea: #28483a;
+  --rojo: #eb7a60;
+  --rojo-luz: #2b1913;
+  --rojo-linea: #4a2b20;
 
-  --rail: #100c07;
-  --rail-2: #1a140d;
-  --rail-linea: #2e251a;
+  --rail: #0d0906;
+  --rail-2: #161009;
+  --rail-linea: #251e15;
+
+  --sombra-1: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --sombra-2: 0 10px 28px -10px rgba(0, 0, 0, 0.7), 0 2px 6px rgba(0, 0, 0, 0.4);
+  --sombra-3: 0 30px 70px -18px rgba(0, 0, 0, 0.8), 0 4px 12px rgba(0, 0, 0, 0.5);
 
   --foreground: var(--texto);
-  --card: #1d1710;
   --card-foreground: var(--texto);
   --popover: #1d1710;
   --popover-foreground: var(--texto);
@@ -164,12 +194,24 @@
   --muted-foreground: var(--texto-2);
   --accent: var(--sol-vela);
   --accent-foreground: var(--sol-70);
-  --destructive: #e0563a;
+  --destructive: var(--rojo);
+  --destructive-foreground: #2b1913;
   --border: var(--linea);
   --input: var(--linea-2);
 }
 
 @layer base {
+  /* Base de 15 px. El ajuste de tamaño del dispositivo mueve todo con ella. */
+  html {
+    font-size: 15px;
+  }
+  html[data-tam="compacto"] {
+    font-size: 13.5px;
+  }
+  html[data-tam="grande"] {
+    font-size: 17px;
+  }
+
   * {
     border-color: var(--color-border);
   }
@@ -177,34 +219,26 @@
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-family: var(--font-sans);
+    line-height: 1.5;
     -webkit-font-smoothing: antialiased;
-    /* Luz cálida difusa: el ámbar entra por arriba, nunca compite con el contenido */
-    background-image:
-      radial-gradient(58rem 26rem at 82% -12%, rgba(239, 157, 37, 0.1), transparent 62%),
-      radial-gradient(44rem 22rem at 8% -8%, rgba(84, 40, 37, 0.05), transparent 60%);
-    background-attachment: fixed;
-    background-repeat: no-repeat;
   }
-  .dark body {
-    background-image:
-      radial-gradient(58rem 26rem at 82% -12%, rgba(239, 157, 37, 0.13), transparent 62%),
-      radial-gradient(44rem 22rem at 8% -8%, rgba(239, 157, 37, 0.05), transparent 60%);
-  }
+  /* Los títulos son de interfaz: Geist. Fraunces sólo en .voz y .marca. */
   h1,
   h2,
-  h3 {
-    font-family: var(--font-voz);
+  h3,
+  h4 {
     font-weight: 600;
-    letter-spacing: -0.01em;
+    letter-spacing: -0.015em;
+    text-wrap: balance;
   }
   ::selection {
     background-color: var(--sol-luz);
-    color: var(--texto);
+    color: var(--noche);
   }
   :focus-visible {
     outline: 2px solid var(--sol);
     outline-offset: 2px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
   }
   * {
     scrollbar-width: thin;
@@ -229,12 +263,69 @@
   }
 }
 
-/* ── Movimiento ───────────────────────────────────────────── */
+/* ── La voz del sistema ───────────────────────────────────────
+   Fraunces + Tinta. Sólo dos sitios: el logotipo y la frase que
+   explica qué hace la pantalla. Un precio, un botón o un enlace
+   en Tinta están mal. */
 
-@keyframes entra {
+@utility voz {
+  font-family: var(--font-voz);
+  color: var(--tinta);
+  font-weight: 400;
+  font-optical-sizing: auto;
+}
+
+@utility marca {
+  font-family: var(--font-voz);
+  color: var(--tinta);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+/* El dinero: siempre monoespaciada y tabular */
+@utility num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+/* Rótulo en versalitas: grupos del rail y cabeceras de dato */
+@utility rotulo {
+  font-size: var(--text-rotulo);
+  line-height: 1.2;
+  font-weight: 500;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+/* Anillo de foco de la marca, para controles que apagan el outline */
+@utility anillo-foco {
+  outline: none;
+  box-shadow: var(--foco);
+}
+
+/* ── Movimiento ───────────────────────────────────────────────
+   Nada se anima solo salvo lo que está cargando. */
+
+@keyframes giro {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes hueso {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0 50%;
+  }
+}
+
+@keyframes vent-entra {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(8px) scale(0.985);
   }
   to {
     opacity: 1;
@@ -242,7 +333,7 @@
   }
 }
 
-@keyframes velo {
+@keyframes velo-entra {
   from {
     opacity: 0;
   }
@@ -251,18 +342,7 @@
   }
 }
 
-@keyframes brota {
-  from {
-    opacity: 0;
-    transform: translateY(10px) scale(0.975);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-@keyframes sube {
+@keyframes cajon-entra {
   from {
     transform: translateY(100%);
   }
@@ -271,7 +351,7 @@
   }
 }
 
-@keyframes desliza {
+@keyframes hoja-entra {
   from {
     transform: translateX(-100%);
   }
@@ -280,86 +360,53 @@
   }
 }
 
-@keyframes crece {
-  from {
-    transform: scaleY(0);
-  }
-  to {
-    transform: scaleY(1);
-  }
+/* Abrir ventana · 220 ms */
+@utility vent-entra {
+  animation: vent-entra 0.22s var(--ease-menu) both;
 }
 
-@utility entra {
-  animation: entra 0.34s var(--ease-suave) both;
+/* El velo detrás de una ventana */
+@utility velo-entra {
+  animation: velo-entra 0.18s ease-out both;
 }
 
-@utility velo {
-  animation: velo 0.2s ease-out both;
+/* El cajón sube desde abajo en tableta */
+@utility cajon-entra {
+  animation: cajon-entra 0.22s var(--ease-menu) both;
 }
 
-@utility brota {
-  animation: brota 0.26s var(--ease-suave) both;
+/* La hoja lateral entra por el borde */
+@utility hoja-entra {
+  animation: hoja-entra 0.22s var(--ease-menu) both;
 }
 
-@utility sube {
-  animation: sube 0.28s var(--ease-suave) both;
+@utility girador {
+  border-radius: 50%;
+  border: 2px solid var(--linea-2);
+  border-top-color: var(--sol);
+  animation: giro 0.7s linear infinite;
 }
 
-@utility desliza {
-  animation: desliza 0.24s var(--ease-suave) both;
-}
-
-@utility crece {
-  animation: crece 0.5s var(--ease-suave) both;
-  transform-origin: bottom;
+@utility hueso {
+  background: linear-gradient(90deg, var(--sup-2) 25%, var(--sup-3) 37%, var(--sup-2) 63%);
+  background-size: 400% 100%;
+  animation: hueso 1.4s ease infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
-    animation-duration: 0.001ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.001ms !important;
-    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+  /* El girador se queda quieto en un punto, no parpadeando */
+  .girador {
+    animation: none !important;
   }
 }
 
-@utility voz {
-  font-family: var(--font-voz);
-}
-
-@utility num {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
-}
-
-/* Etiqueta corta en versalitas: encabezados de dato */
-@utility rotulo {
-  font-size: 10px;
-  line-height: 1.2;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--texto-3);
-}
-
-/* Lámina: superficie de tarjeta con luz superior propia */
-@utility lamina {
-  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.6), transparent 42%);
-}
-
-.dark .lamina {
-  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 42%);
-}
-
-/* Filo ámbar: hairline de acento superior en tarjetas destacadas */
-@utility filo-sol {
-  background-image: linear-gradient(90deg, var(--sol), var(--sol-90) 45%, transparent);
-}
-
-/* Ticket térmico 58mm */
+/* Ticket térmico 58 mm */
 @media print {
   body * {
     visibility: hidden;

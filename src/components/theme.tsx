@@ -25,9 +25,13 @@ export function ThemeToggle() {
     <button
       onClick={toggle}
       aria-label="Cambiar tema"
-      className="grid size-9 place-items-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+      className="grid size-9 shrink-0 place-items-center rounded-md border border-rail-linea text-rail-texto-2 transition-colors duration-[140ms] hover:bg-rail-2 hover:text-rail-texto"
     >
-      {theme === "light" ? <Moon className="size-4" /> : <Sun className="size-4" />}
+      {theme === "light" ? (
+        <Moon className="size-4" strokeWidth={1.75} />
+      ) : (
+        <Sun className="size-4" strokeWidth={1.75} />
+      )}
     </button>
   );
 }

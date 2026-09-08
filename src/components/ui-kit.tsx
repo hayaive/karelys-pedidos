@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -128,8 +129,10 @@ export function Modal({
     return () => window.removeEventListener("keydown", h);
   }, [open, onClose]);
   if (!open) return null;
-  return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-noche/40 p-0 sm:items-center sm:p-4">
+  // Se monta en <body>: el header tiene backdrop-blur y sería el bloque contenedor
+  // de un fixed descendiente, lo que recortaba y descuadraba el modal por arriba.
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-end justify-center overflow-y-auto bg-noche/40 p-0 sm:items-center sm:p-4">
       <div
         className={cn(
           "flex max-h-[92vh] w-full flex-col rounded-t-xl border border-border bg-card shadow-flota sm:rounded-xl",
@@ -143,9 +146,9 @@ export function Modal({
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-4">{children}</div>
-
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

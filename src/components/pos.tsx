@@ -282,22 +282,19 @@ export function POS({
                   )}
                 </div>
                 <div className="flex gap-2">
-                  <button
+                  <Btn
+                    className="flex-1"
                     onClick={() => {
                       setCustomer(null);
                       setCustQ("");
                       setCustFocus(false);
                     }}
-                    className="flex flex-1 items-center justify-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-sm text-muted-foreground hover:bg-surface-2"
                   >
                     Consumidor final
-                  </button>
-                  <button
-                    onClick={() => setNewCustOpen(true)}
-                    className="flex flex-1 items-center justify-center gap-2 rounded-md border border-sol/40 bg-sol/5 px-3 py-2 text-sm font-medium text-sol hover:bg-sol/10"
-                  >
-                    <UserPlus className="size-4" /> Registrar nuevo cliente
-                  </button>
+                  </Btn>
+                  <Btn variant="amber" className="flex-1" onClick={() => setNewCustOpen(true)}>
+                    <UserPlus className="size-4" strokeWidth={1.75} /> Registrar nuevo cliente
+                  </Btn>
                 </div>
               </div>
             )}

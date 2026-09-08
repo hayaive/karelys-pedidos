@@ -2171,3 +2171,33 @@ cd <repository-name>
 npm i
 npm run dev
 ```
+
+## Deploy en Railway
+
+El proyecto está preparado para desplegarse en Railway sin configuración adicional.
+
+**Cómo funciona**
+
+1. Railpack detecta `bun.lock` y usa Bun para toda la pipeline: `bun install` → `bun run build` → `bun run start`.
+2. `vite.config.ts` fija el preset `node-server` de Nitro (el wrapper de Lovable usa `cloudflare-module` por defecto, que no sirve en un contenedor de Railway).
+3. El build genera `.output/server/index.mjs`, que el script `start` arranca.
+4. `node-server` también sirve `.output/public`, necesario porque en Railway no hay CDN delante del contenedor.
+
+**Pasos**
+
+1. En Railway: *New Project* → *Deploy from GitHub repo* → seleccionar este repositorio.
+2. Generar un dominio en *Settings → Networking → Generate Domain*.
+3. Listo. No hace falta definir variables de entorno: la app no lee ninguna.
+
+**Notas**
+
+- El servidor toma el puerto de `PORT` (lo inyecta Railway) y escucha en todas las interfaces. No fijes `PORT` a mano.
+- Para desplegar en otro proveedor, exporta `NITRO_PRESET` (por ejemplo `NITRO_PRESET=vercel`); tiene prioridad sobre el valor por defecto.
+- Los builds hechos desde Lovable no se ven afectados: allí `LOVABLE_NITRO_PRESET` fija el preset.
+
+**Verificar el build de producción en local**
+
+```sh
+bun run build
+PORT=8099 bun run start
+```

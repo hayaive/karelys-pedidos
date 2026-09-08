@@ -1,0 +1,218 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ═══════════════════════════════════════════════════════════
+   SISTEMA ÁMBAR — HAYAI para Karelys Delicias
+   Ámbar es la acción. Noche es el chrome. El fondo es blanco.
+   ═══════════════════════════════════════════════════════════ */
+
+@theme inline {
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 18px;
+  --radius-2xl: 18px;
+  --radius-3xl: 18px;
+  --radius-4xl: 18px;
+
+  --font-sans: "Geist", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+  --font-voz: "Fraunces", Georgia, "Times New Roman", serif;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-sol: var(--sol);
+  --color-sol-90: var(--sol-90);
+  --color-sol-70: var(--sol-70);
+  --color-sol-luz: var(--sol-luz);
+  --color-sol-vela: var(--sol-vela);
+  --color-noche: var(--noche);
+  --color-tinta: var(--tinta);
+  --color-sup-2: var(--sup-2);
+  --color-sup-3: var(--sup-3);
+  --color-linea: var(--linea);
+  --color-linea-2: var(--linea-2);
+  --color-texto: var(--texto);
+  --color-texto-2: var(--texto-2);
+  --color-texto-3: var(--texto-3);
+  --color-verde: var(--verde);
+  --color-verde-luz: var(--verde-luz);
+  --color-verde-linea: var(--verde-linea);
+  --color-rojo: var(--rojo);
+  --color-rojo-luz: var(--rojo-luz);
+  --color-rojo-linea: var(--rojo-linea);
+  --color-rail: var(--rail);
+  --color-rail-2: var(--rail-2);
+  --color-rail-linea: var(--rail-linea);
+  --color-rail-texto: var(--rail-texto);
+  --color-rail-texto-2: var(--rail-texto-2);
+
+  --shadow-sutil: 0 1px 2px rgba(22, 17, 11, 0.07);
+  --shadow-flota: 0 10px 28px -10px rgba(22, 17, 11, 0.22), 0 2px 6px rgba(22, 17, 11, 0.06);
+}
+
+:root {
+  --sol: #ef9d25;
+  --sol-90: #e08f16;
+  --sol-70: #bc7810;
+  --sol-luz: #fbe3c0;
+  --sol-vela: #fdf4e6;
+  --noche: #16110b;
+  --tinta: #542825;
+
+  --background: #ffffff;
+  --sup-2: #f7f5f2;
+  --sup-3: #efebe5;
+  --linea: #e7e1d9;
+  --linea-2: #d3cbc0;
+
+  --texto: #16110b;
+  --texto-2: #6b6157;
+  --texto-3: #9b9187;
+
+  --verde: #2c7a57;
+  --verde-luz: #e7f1ec;
+  --verde-linea: #bfdbcc;
+  --rojo: #be3b1f;
+  --rojo-luz: #fbebe6;
+  --rojo-linea: #f0c7bb;
+
+  --rail: #16110b;
+  --rail-2: #1f1810;
+  --rail-linea: #2e251a;
+  --rail-texto: #f2eade;
+  --rail-texto-2: #9b8d7b;
+
+  --foreground: var(--texto);
+  --card: #ffffff;
+  --card-foreground: var(--texto);
+  --popover: #ffffff;
+  --popover-foreground: var(--texto);
+  --primary: var(--sol);
+  --primary-foreground: #16110b;
+  --secondary: var(--sup-2);
+  --secondary-foreground: var(--texto);
+  --muted: var(--sup-2);
+  --muted-foreground: var(--texto-2);
+  --accent: var(--sol-vela);
+  --accent-foreground: var(--sol-70);
+  --destructive: var(--rojo);
+  --destructive-foreground: #ffffff;
+  --border: var(--linea);
+  --input: var(--linea-2);
+  --ring: var(--sol);
+}
+
+.dark {
+  --background: #16110b;
+  --sup-2: #241d15;
+  --sup-3: #2e251a;
+  --linea: #332a1f;
+  --linea-2: #473b2c;
+  --texto: #f7f2ea;
+  --texto-2: #b2a594;
+  --texto-3: #857a6a;
+  --tinta: #dfaa9c;
+  --sol-luz: #4b3312;
+  --sol-vela: #2a1e0e;
+  --sol-70: #f5b655;
+
+  --verde-luz: #12291f;
+  --verde-linea: #24503c;
+  --rojo-luz: #2c150f;
+  --rojo-linea: #5a2618;
+
+  --rail: #100c07;
+  --rail-2: #1a140d;
+  --rail-linea: #2e251a;
+
+  --foreground: var(--texto);
+  --card: #1d1710;
+  --card-foreground: var(--texto);
+  --popover: #1d1710;
+  --popover-foreground: var(--texto);
+  --primary: var(--sol);
+  --primary-foreground: #16110b;
+  --secondary: var(--sup-2);
+  --secondary-foreground: var(--texto);
+  --muted: var(--sup-2);
+  --muted-foreground: var(--texto-2);
+  --accent: var(--sol-vela);
+  --accent-foreground: var(--sol-70);
+  --destructive: #e0563a;
+  --border: var(--linea);
+  --input: var(--linea-2);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-voz);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+}
+
+@utility voz {
+  font-family: var(--font-voz);
+}
+
+@utility num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* Ticket térmico 58mm */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #ticket-print,
+  #ticket-print * {
+    visibility: visible;
+  }
+  #ticket-print {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 55mm;
+    color: #000;
+    background: #fff;
+  }
+  @page {
+    size: 58mm auto;
+    margin: 2mm;
+  }
+}

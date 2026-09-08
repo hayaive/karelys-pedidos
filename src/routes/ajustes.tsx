@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
+import { Building2, CircleDollarSign, CreditCard, Database, Printer, Tags, Users } from "lucide-react";
 import { AppShell, PageHead } from "@/components/app-shell";
 import { Badge, Btn, Card, CardHead, ConfirmDialog, Field, Input, Modal, Select } from "@/components/ui-kit";
 import { logAudit, mutate, resetDatabase, useAppState } from "@/lib/store";
@@ -27,13 +28,13 @@ export const Route = createFileRoute("/ajustes")({
 });
 
 const TABS = [
-  ["empresa", "Empresa"],
-  ["usuarios", "Usuarios y permisos"],
-  ["tasas", "Tasas de cambio"],
-  ["precios", "Tipos de precio"],
-  ["pagos", "Métodos de pago"],
-  ["impresion", "Impresión y numeración"],
-  ["datos", "Datos e importación"],
+  ["empresa", "Empresa", Building2],
+  ["usuarios", "Usuarios y permisos", Users],
+  ["tasas", "Tasas de cambio", CircleDollarSign],
+  ["precios", "Tipos de precio", Tags],
+  ["pagos", "Métodos de pago", CreditCard],
+  ["impresion", "Impresión y numeración", Printer],
+  ["datos", "Datos e importación", Database],
 ] as const;
 
 function Ajustes() {
@@ -41,27 +42,52 @@ function Ajustes() {
   return (
     <>
       <PageHead title="Ajustes" sub="Configuración del sistema" />
-      <div className="mb-4 flex flex-wrap gap-1.5">
-        {TABS.map(([k, label]) => (
-          <button
-            key={k}
-            onClick={() => setTab(k)}
-            className={
-              "rounded-md px-3 py-1.5 text-sm transition-colors " +
-              (tab === k ? "bg-sol-vela text-sol-70" : "text-muted-foreground hover:bg-secondary")
-            }
-          >
-            {label}
-          </button>
-        ))}
+      <div className="mb-4 lg:hidden">
+        <select
+          value={tab}
+          onChange={(e) => setTab(e.target.value as (typeof TABS)[number][0])}
+          className="w-full rounded-md border border-border bg-card px-3 py-2 text-sm"
+        >
+          {TABS.map(([k, label]) => (
+            <option key={k} value={k}>
+              {label}
+            </option>
+          ))}
+        </select>
       </div>
-      {tab === "empresa" && <Empresa />}
-      {tab === "usuarios" && <Usuarios />}
-      {tab === "tasas" && <Tasas />}
-      {tab === "precios" && <Precios />}
-      {tab === "pagos" && <Pagos />}
-      {tab === "impresion" && <Impresion />}
-      {tab === "datos" && <Datos />}
+      <div className="grid items-start gap-6 lg:grid-cols-[15rem_minmax(0,1fr)]">
+        <aside className="sticky top-20 hidden rounded-lg border border-border bg-secondary/60 p-3 lg:block">
+          <p className="px-3 pb-3 pt-1 text-xs font-semibold uppercase text-texto-3">Configuración</p>
+          <nav className="space-y-1" aria-label="Secciones de ajustes">
+            {TABS.map(([k, label, Icon]) => (
+              <Btn
+                key={k}
+                variant="ghost"
+                onClick={() => setTab(k)}
+                className={
+                  "h-auto w-full justify-start px-3 py-2.5 text-left text-sm " +
+                  (tab === k
+                    ? "bg-sol-vela font-semibold text-sol-70 hover:bg-sol-vela hover:text-sol-70"
+                    : "text-muted-foreground")
+                }
+              >
+                <Icon className={"size-4 shrink-0 " + (tab === k ? "text-sol" : "text-texto-3")} />
+                <span className="min-w-0 leading-snug">{label}</span>
+              </Btn>
+            ))}
+          </nav>
+        </aside>
+
+        <section className="min-w-0">
+          {tab === "empresa" && <Empresa />}
+          {tab === "usuarios" && <Usuarios />}
+          {tab === "tasas" && <Tasas />}
+          {tab === "precios" && <Precios />}
+          {tab === "pagos" && <Pagos />}
+          {tab === "impresion" && <Impresion />}
+          {tab === "datos" && <Datos />}
+        </section>
+      </div>
     </>
   );
 }
@@ -70,7 +96,7 @@ function Empresa() {
   const s = useAppState();
   const [f, setF] = useState(s.company);
   return (
-    <Card className="max-w-2xl">
+    <Card className="max-w-4xl">
       <CardHead title="Configuración de empresa" sub="Karelys Delicias es la marca principal del sistema" />
       <div className="grid gap-3 p-4 sm:grid-cols-2">
         <Field label="Nombre">
@@ -164,7 +190,7 @@ function Usuarios() {
         />
         <div className="divide-y divide-border">
           {s.users.map((u) => (
-            <div key={u.id} className="flex items-center gap-3 px-4 py-2.5">
+            <div key={u.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5">
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium">{u.fullName}</p>
                 <p className="num text-xs text-muted-foreground">
@@ -204,7 +230,7 @@ function Usuarios() {
         <div className="divide-y divide-border">
           {s.roles.map((r) => (
             <div key={r.id} className="px-4 py-2.5">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
                 <input
                   defaultValue={r.name}
                   onBlur={(e) =>
@@ -213,7 +239,7 @@ function Usuarios() {
                       if (role) role.name = e.target.value;
                     })
                   }
-                  className="flex-1 bg-transparent text-sm font-medium outline-none"
+                  className="min-w-[8rem] flex-1 bg-transparent text-sm font-medium outline-none"
                 />
                 <span className="num text-xs text-muted-foreground">{r.permissions.length} permisos</span>
                 <Btn size="sm" variant="ghost" onClick={() => setRoleEdit(roleEdit === r.id ? null : r.id)}>
@@ -377,7 +403,7 @@ function Tasas() {
         {s.rates.slice(0, 60).map((r) => (
           <div key={r.id} className="flex flex-wrap items-center gap-3 px-4 py-2.5 text-sm">
             <Badge tone="amber">{r.source.replace("_", " ")}</Badge>
-            <span className="num flex-1">{num(r.value)}</span>
+            <span className="num min-w-[6rem] flex-1">{num(r.value)}</span>
             <span className="text-xs text-muted-foreground">{r.automatic ? "Automática" : "Manual"}</span>
             <span className="text-xs text-muted-foreground">
               {s.users.find((u) => u.id === r.userId)?.fullName ?? "Sistema"}
@@ -396,7 +422,7 @@ function Precios() {
   return (
     <Card className="max-w-xl">
       <CardHead title="Tipos de precio" sub="Configurables: agrega tantos como necesites" />
-      <div className="flex gap-2 border-b border-border p-3">
+      <div className="flex flex-wrap gap-2 border-b border-border p-3">
         <Input placeholder="Nuevo tipo de precio" value={name} onChange={(e) => setName(e.target.value)} />
         <Btn
           variant="amber"
@@ -412,7 +438,7 @@ function Precios() {
       </div>
       <div className="divide-y divide-border">
         {s.priceTypes.map((p) => (
-          <div key={p.id} className="flex items-center gap-3 px-4 py-2.5">
+          <div key={p.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5">
             <input
               defaultValue={p.name}
               onBlur={(e) =>

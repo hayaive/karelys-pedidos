@@ -58,7 +58,7 @@ export function Logo({ size = 36 }: { size?: number }) {
     );
   return (
     <div
-      className="grid shrink-0 place-items-center rounded-md bg-sol font-semibold text-noche"
+      className="grid shrink-0 place-items-center rounded-md bg-gradient-to-br from-sol to-sol-90 font-semibold text-noche shadow-sol ring-1 ring-sol-70/25"
       style={{ width: size, height: size, fontFamily: "var(--font-voz)", fontSize: size * 0.42 }}
     >
       {initials}
@@ -89,19 +89,22 @@ export function AppShell({ children, requires }: { children: ReactNode; requires
     },
   });
 
-
   const nav = NAV.filter((n) => !n.perm || can(n.perm));
   const mobileNav = nav.filter((n) => MOBILE_PATHS.includes(n.to));
   const allowed = !requires || can(requires);
 
   if (!hydrated)
-    return <div className="grid min-h-screen place-items-center text-sm text-muted-foreground">Cargando…</div>;
+    return (
+      <div className="grid min-h-screen place-items-center text-sm text-muted-foreground">
+        Cargando…
+      </div>
+    );
   if (!user) return null;
 
   return (
     <div className="flex min-h-screen bg-background">
       {/* Sidebar desktop */}
-      <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-rail-linea bg-rail lg:flex">
+      <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-rail-linea bg-rail bg-[radial-gradient(28rem_16rem_at_-10%_-5%,rgba(239,157,37,0.14),transparent_65%)] lg:flex">
         <div className="flex items-center gap-3 border-b border-rail-linea px-4 py-4">
           <Logo />
           <div className="min-w-0">
@@ -109,21 +112,38 @@ export function AppShell({ children, requires }: { children: ReactNode; requires
             <p className="text-[11px] text-rail-texto-2">Sistema de mostrador</p>
           </div>
         </div>
-        <nav className="flex-1 space-y-0.5 p-2">
+        <nav className="flex-1 space-y-0.5 overflow-y-auto p-2">
+          <p className="rotulo px-3 pb-1.5 pt-2 text-rail-texto-2">Operación</p>
           {nav.map((n) => (
-            <SideLink key={n.to} to={n.to} label={n.label} icon={n.icon} active={isActive(pathname, n.to)} />
+            <SideLink
+              key={n.to}
+              to={n.to}
+              label={n.label}
+              icon={n.icon}
+              active={isActive(pathname, n.to)}
+            />
           ))}
         </nav>
         <div className="border-t border-rail-linea p-3">
-          <p className="truncate text-xs text-rail-texto">{user.fullName}</p>
-          <p className="truncate text-[11px] text-rail-texto-2">{role?.name ?? "Sin rol"}</p>
-          <div className="mt-2 flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
+            <span
+              aria-hidden
+              className="grid size-8 shrink-0 place-items-center rounded-full bg-rail-2 text-[11px] font-semibold text-sol ring-1 ring-rail-linea"
+            >
+              {iniciales(user.fullName)}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-xs font-medium text-rail-texto">{user.fullName}</p>
+              <p className="truncate text-[11px] text-rail-texto-2">{role?.name ?? "Sin rol"}</p>
+            </div>
+          </div>
+          <div className="mt-2.5 flex items-center gap-2">
             <button
               onClick={() => {
                 logout();
                 navigate({ to: "/login" });
               }}
-              className="inline-flex flex-1 items-center gap-2 rounded-md border border-rail-linea px-2.5 py-1.5 text-xs text-rail-texto-2 transition-colors hover:text-rail-texto"
+              className="inline-flex flex-1 items-center gap-2 rounded-md border border-rail-linea px-2.5 py-1.5 text-xs text-rail-texto-2 transition-colors hover:border-sol/40 hover:bg-rail-2 hover:text-rail-texto"
             >
               <LogOut className="size-3.5" /> Salir
             </button>
@@ -146,7 +166,10 @@ export function AppShell({ children, requires }: { children: ReactNode; requires
               <Logo size={28} />
               <span className="voz truncate text-sm">{s.company.name}</span>
             </div>
-            <div className="hidden text-xs text-muted-foreground lg:block">{longDate()}</div>
+            <div className="hidden items-center gap-2 rounded-full border border-border bg-card/70 px-3 py-1 text-xs text-muted-foreground shadow-sutil lg:inline-flex">
+              <span aria-hidden className="size-1.5 rounded-full bg-sol" />
+              {longDate()}
+            </div>
             <div className="ml-auto flex shrink-0 items-center gap-2">
               <div className="hidden lg:block">
                 <RateBar />
@@ -157,18 +180,17 @@ export function AppShell({ children, requires }: { children: ReactNode; requires
           <div className="overflow-x-auto px-3 pb-2 lg:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
             <RateBar />
           </div>
-
         </header>
 
-        <main className="min-w-0 flex-1 px-3 pb-24 pt-4 sm:px-5 lg:pb-8">
+        <main key={pathname} className="entra min-w-0 flex-1 px-3 pb-24 pt-4 sm:px-5 lg:pb-8">
           {allowed ? (
             children
           ) : (
             <Card className="mx-auto mt-10 max-w-md p-6 text-center">
               <h2 className="voz text-lg">Sin acceso</h2>
               <p className="mt-2 text-sm text-muted-foreground">
-                Tu rol {role ? `“${role.name}”` : ""} no tiene permiso para ver esta sección. Solicítalo a un
-                administrador.
+                Tu rol {role ? `“${role.name}”` : ""} no tiene permiso para ver esta sección.
+                Solicítalo a un administrador.
               </p>
             </Card>
           )}
@@ -177,7 +199,7 @@ export function AppShell({ children, requires }: { children: ReactNode; requires
 
       {/* Nav móvil inferior */}
       <nav
-        className="fixed inset-x-0 bottom-0 z-30 grid border-t border-border bg-card lg:hidden"
+        className="fixed inset-x-0 bottom-0 z-30 grid border-t border-border bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden"
         style={{ gridTemplateColumns: `repeat(${Math.max(1, mobileNav.length)}, minmax(0,1fr))` }}
       >
         {mobileNav.map((n) => {
@@ -187,10 +209,17 @@ export function AppShell({ children, requires }: { children: ReactNode; requires
               key={n.to}
               to={n.to}
               className={cn(
-                "flex flex-col items-center gap-1 py-2 text-[10px]",
+                "relative flex flex-col items-center gap-1 py-2 text-[10px] transition-colors",
                 active ? "text-sol-70" : "text-muted-foreground",
               )}
             >
+              <span
+                aria-hidden
+                className={cn(
+                  "absolute inset-x-5 top-0 h-0.5 rounded-b-full transition-opacity",
+                  active ? "bg-sol opacity-100" : "opacity-0",
+                )}
+              />
               <n.icon className={cn("size-5", active && "text-sol")} />
               {n.label}
             </Link>
@@ -201,9 +230,9 @@ export function AppShell({ children, requires }: { children: ReactNode; requires
       {/* Drawer móvil */}
       {open && (
         <div className="fixed inset-0 z-50 lg:hidden" onClick={() => setOpen(false)}>
-          <div className="absolute inset-0 bg-noche/50" />
+          <div className="velo absolute inset-0 bg-noche/50 backdrop-blur-[2px]" />
           <div
-            className="absolute inset-y-0 left-0 flex w-64 flex-col bg-rail"
+            className="desliza absolute inset-y-0 left-0 flex w-64 flex-col bg-rail bg-[radial-gradient(24rem_14rem_at_-10%_-5%,rgba(239,157,37,0.16),transparent_65%)] shadow-flota"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center gap-3 border-b border-rail-linea px-4 py-4">
@@ -212,7 +241,13 @@ export function AppShell({ children, requires }: { children: ReactNode; requires
             </div>
             <nav className="flex-1 space-y-0.5 overflow-y-auto p-2">
               {nav.map((n) => (
-                <SideLink key={n.to} to={n.to} label={n.label} icon={n.icon} active={isActive(pathname, n.to)} />
+                <SideLink
+                  key={n.to}
+                  to={n.to}
+                  label={n.label}
+                  icon={n.icon}
+                  active={isActive(pathname, n.to)}
+                />
               ))}
             </nav>
             <div className="border-t border-rail-linea p-3">
@@ -253,24 +288,59 @@ function SideLink({
     <Link
       to={to}
       className={cn(
-        "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
-        active ? "bg-rail-2 text-rail-texto" : "text-rail-texto-2 hover:bg-rail-2 hover:text-rail-texto",
+        "group relative flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
+        active
+          ? "bg-rail-2 font-medium text-rail-texto"
+          : "text-rail-texto-2 hover:bg-rail-2/70 hover:text-rail-texto",
       )}
     >
-      <Icon className={cn("size-4", active && "text-sol")} />
+      <span
+        aria-hidden
+        className={cn(
+          "absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-sol transition-opacity",
+          active ? "opacity-100" : "opacity-0",
+        )}
+      />
+      <Icon
+        className={cn("size-4 transition-colors", active ? "text-sol" : "group-hover:text-sol/70")}
+      />
       {label}
     </Link>
   );
 }
 
-export function PageHead({ title, sub, action }: { title: string; sub?: string; action?: ReactNode }) {
+export function PageHead({
+  title,
+  sub,
+  action,
+}: {
+  title: string;
+  sub?: string;
+  action?: ReactNode;
+}) {
   return (
     <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-      <div>
-        <h1 className="voz text-2xl">{title}</h1>
-        {sub && <p className="mt-0.5 text-sm text-muted-foreground">{sub}</p>}
+      <div className="min-w-0">
+        <div className="flex items-center gap-2.5">
+          <span
+            aria-hidden
+            className="h-6 w-1 shrink-0 rounded-full bg-gradient-to-b from-sol to-sol-90"
+          />
+          <h1 className="voz truncate text-2xl">{title}</h1>
+        </div>
+        {sub && <p className="mt-1 pl-3.5 text-sm text-muted-foreground">{sub}</p>}
       </div>
       {action}
     </div>
   );
+}
+
+function iniciales(nombre: string) {
+  return nombre
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((parte) => parte[0] ?? "")
+    .join("")
+    .toUpperCase();
 }

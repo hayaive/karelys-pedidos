@@ -1,11 +1,21 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { IcoMas, IcoPapelera } from "@/chasis/iconos";
 import { useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell, PageHead } from "@/components/app-shell";
 import { useSession } from "@/lib/auth";
 import { POS } from "@/components/pos";
-import { Badge, Btn, Card, ConfirmDialog, Empty, Field, Modal, Select, Textarea } from "@/components/ui-kit";
+import {
+  Badge,
+  Btn,
+  Card,
+  ConfirmDialog,
+  Empty,
+  Field,
+  Modal,
+  Select,
+  Textarea,
+} from "@/components/ui-kit";
 import { useAppState } from "@/lib/store";
 import { deleteOrder, setOrderStatus, updateOrder } from "@/lib/business";
 import { dt, usd } from "@/lib/format";
@@ -56,7 +66,11 @@ function Pedidos() {
   });
 
   const orders = s.orders.filter((o) =>
-    filter === "activos" ? !["procesado", "cancelado"].includes(o.status) : filter === "todos" ? true : o.status === filter,
+    filter === "activos"
+      ? !["procesado", "cancelado"].includes(o.status)
+      : filter === "todos"
+        ? true
+        : o.status === filter,
   );
 
   if (creating)
@@ -107,7 +121,7 @@ function Pedidos() {
             </Select>
             {can("edit_orders") && (
               <Btn variant="amber" onClick={() => setCreating(true)}>
-                <Plus className="size-4" /> Nuevo pedido
+                <IcoMas /> Nuevo pedido
               </Btn>
             )}
           </div>
@@ -138,7 +152,11 @@ function Pedidos() {
                   <p className="text-sm">{o.customerName}</p>
                   <p className="num text-xs text-muted-foreground">{dt(o.createdAt)}</p>
                 </div>
-                <Badge tone={o.status === "procesado" ? "green" : o.status === "cancelado" ? "red" : "amber"}>
+                <Badge
+                  tone={
+                    o.status === "procesado" ? "green" : o.status === "cancelado" ? "red" : "amber"
+                  }
+                >
                   {STATUSES.find((x) => x.key === o.status)?.label}
                 </Badge>
               </div>
@@ -150,7 +168,9 @@ function Pedidos() {
                 ))}
                 {o.items.length > 4 && <li>+{o.items.length - 4} más</li>}
               </ul>
-              {o.note && <p className="mt-2 rounded bg-sol-vela px-2 py-1 text-xs text-sol-70">{o.note}</p>}
+              {o.note && (
+                <p className="mt-2 rounded bg-sol-vela px-2 py-1 text-xs text-sol-70">{o.note}</p>
+              )}
               <p className="num mt-3 text-lg font-semibold">{usd(o.totalUsd)}</p>
               {o.status !== "procesado" && o.status !== "cancelado" && (
                 <div className="mt-3 flex flex-wrap gap-2">
@@ -165,7 +185,7 @@ function Pedidos() {
                         Editar
                       </Btn>
                       <Btn size="sm" variant="ghost" onClick={() => setDel(o)}>
-                        <Trash2 className="size-3.5" />
+                        <IcoPapelera />
                       </Btn>
                     </>
                   )}
@@ -176,7 +196,11 @@ function Pedidos() {
         </div>
       )}
 
-      <Modal open={!!editing} onClose={() => setEditing(null)} title={`Editar ${editing?.number ?? ""}`}>
+      <Modal
+        open={!!editing}
+        onClose={() => setEditing(null)}
+        title={`Editar ${editing?.number ?? ""}`}
+      >
         {editing && <EditOrder order={editing} onClose={() => setEditing(null)} />}
       </Modal>
 
@@ -204,7 +228,10 @@ function EditOrder({ order, onClose }: { order: Order; onClose: () => void }) {
     <div className="space-y-3">
       <div className="space-y-2">
         {items.map((i, k) => (
-          <div key={k} className="flex items-center gap-2 rounded-md border border-border px-3 py-2">
+          <div
+            key={k}
+            className="flex items-center gap-2 rounded-md border border-border px-3 py-2"
+          >
             <span className="flex-1 truncate text-sm">{i.name}</span>
             <input
               type="number"
@@ -214,7 +241,13 @@ function EditOrder({ order, onClose }: { order: Order; onClose: () => void }) {
                 const qty = Math.max(1, parseInt(e.target.value) || 1);
                 setItems(
                   items.map((x, j) =>
-                    j === k ? { ...x, qty, subtotalUsd: (x.unitPriceUsd + (x.customizationPrice ?? 0)) * qty } : x,
+                    j === k
+                      ? {
+                          ...x,
+                          qty,
+                          subtotalUsd: (x.unitPriceUsd + (x.customizationPrice ?? 0)) * qty,
+                        }
+                      : x,
                   ),
                 );
               }}
@@ -225,7 +258,7 @@ function EditOrder({ order, onClose }: { order: Order; onClose: () => void }) {
               onClick={() => setItems(items.filter((_, j) => j !== k))}
               className="text-muted-foreground hover:text-rojo"
             >
-              <Trash2 className="size-4" />
+              <IcoPapelera />
             </button>
           </div>
         ))}

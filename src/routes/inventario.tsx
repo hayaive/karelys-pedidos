@@ -1,10 +1,22 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { IcoBuscar, IcoMas } from "@/chasis/iconos";
 import { useState } from "react";
-import { Plus, Search } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell, PageHead } from "@/components/app-shell";
 import { useSession } from "@/lib/auth";
-import { Badge, Btn, Card, CardHead, ConfirmDialog, Empty, Field, Input, Modal, Select, Textarea } from "@/components/ui-kit";
+import {
+  Badge,
+  Btn,
+  Card,
+  CardHead,
+  ConfirmDialog,
+  Empty,
+  Field,
+  Input,
+  Modal,
+  Select,
+  Textarea,
+} from "@/components/ui-kit";
 import { logAudit, mutate, useAppState } from "@/lib/store";
 import { addMovement, priceOf } from "@/lib/business";
 import { dt, num, usd } from "@/lib/format";
@@ -16,9 +28,15 @@ export const Route = createFileRoute("/inventario")({
   head: () => ({
     meta: [
       { title: "Inventario · Karelys Delicias" },
-      { name: "description", content: "Productos, precios por tipo, stock y movimientos de inventario." },
+      {
+        name: "description",
+        content: "Productos, precios por tipo, stock y movimientos de inventario.",
+      },
       { property: "og:title", content: "Inventario · Karelys Delicias" },
-      { property: "og:description", content: "Productos, precios por tipo, stock y movimientos de inventario." },
+      {
+        property: "og:description",
+        content: "Productos, precios por tipo, stock y movimientos de inventario.",
+      },
     ],
   }),
   component: () => (
@@ -42,37 +60,52 @@ function Inventario() {
   const list = s.products.filter(
     (p) =>
       (cat === "all" || p.categoryId === cat) &&
-      (stockFilter === "all" || (stockFilter === "bajo" ? p.stock <= p.minStock : p.stock > p.minStock)) &&
-      (p.name.toLowerCase().includes(q.toLowerCase()) || p.code.toLowerCase().includes(q.toLowerCase())),
+      (stockFilter === "all" ||
+        (stockFilter === "bajo" ? p.stock <= p.minStock : p.stock > p.minStock)) &&
+      (p.name.toLowerCase().includes(q.toLowerCase()) ||
+        p.code.toLowerCase().includes(q.toLowerCase())),
   );
 
   return (
     <>
       <PageHead
         title="Inventario"
-        sub={`${s.products.length} productos · ${s.categories.length} categorías`}
+        sub="Lo que hay, lo que falta y todo lo que entra y sale del mostrador."
+        dato={`${s.products.length} productos · ${s.categories.length} categorías`}
         action={
           can("edit_inventory") && (
-          <Btn
-            variant="amber"
-            onClick={() =>
-              setEdit({ code: "", name: "", categoryId: s.categories[0]?.id, stock: 0, minStock: 5, active: true, prices: [] })
-            }
-          >
-            <Plus className="size-4" /> Nuevo producto
-          </Btn>
+            <Btn
+              variant="amber"
+              onClick={() =>
+                setEdit({
+                  code: "",
+                  name: "",
+                  categoryId: s.categories[0]?.id,
+                  stock: 0,
+                  minStock: 5,
+                  active: true,
+                  prices: [],
+                })
+              }
+            >
+              <IcoMas /> Nuevo producto
+            </Btn>
           )
         }
       />
 
-      <div className="mb-4 flex gap-1.5">
+      <div className="mb-4 flex gap-[0.15rem] overflow-x-auto border-b border-border">
         {(["productos", "categorias", "movimientos"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
+            aria-selected={tab === t}
+            role="tab"
             className={
-              "rounded-md px-3 py-1.5 text-sm capitalize transition-colors " +
-              (tab === t ? "bg-sol-vela text-sol-70" : "text-muted-foreground hover:bg-secondary")
+              "-mb-px whitespace-nowrap border-b-2 px-[0.85rem] py-[0.6rem] text-[0.9rem] capitalize transition-colors duration-[140ms] " +
+              (tab === t
+                ? "border-sol font-semibold text-texto"
+                : "border-transparent font-medium text-texto-2 hover:text-texto")
             }
           >
             {t}
@@ -84,8 +117,13 @@ function Inventario() {
         <>
           <div className="mb-3 flex flex-col gap-2 sm:flex-row">
             <div className="relative flex-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-texto-3" />
-              <Input className="pl-9" placeholder="Buscar producto o código" value={q} onChange={(e) => setQ(e.target.value)} />
+              <IcoBuscar />
+              <Input
+                className="pl-9"
+                placeholder="Buscar producto o código"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+              />
             </div>
             <Select value={cat} onChange={(e) => setCat(e.target.value)} className="sm:w-48">
               <option value="all">Todas las categorías</option>
@@ -95,7 +133,11 @@ function Inventario() {
                 </option>
               ))}
             </Select>
-            <Select value={stockFilter} onChange={(e) => setStockFilter(e.target.value)} className="sm:w-40">
+            <Select
+              value={stockFilter}
+              onChange={(e) => setStockFilter(e.target.value)}
+              className="sm:w-40"
+            >
               <option value="all">Todo el stock</option>
               <option value="bajo">Stock bajo</option>
               <option value="ok">Stock suficiente</option>
@@ -129,15 +171,26 @@ function Inventario() {
                         <td className="px-4 py-2.5 text-xs text-muted-foreground">
                           {s.categories.find((c) => c.id === p.categoryId)?.name}
                         </td>
-                        <td className={"num px-4 py-2.5 text-right " + (p.stock <= p.minStock ? "text-rojo" : "")}>
+                        <td
+                          className={
+                            "num px-4 py-2.5 text-right " +
+                            (p.stock <= p.minStock ? "text-rojo" : "")
+                          }
+                        >
                           {p.stock}
                         </td>
-                        <td className="num px-4 py-2.5 text-right text-muted-foreground">{p.minStock}</td>
+                        <td className="num px-4 py-2.5 text-right text-muted-foreground">
+                          {p.minStock}
+                        </td>
                         <td className="num px-4 py-2.5 text-right">
-                          {p.bsOnly ? num(p.bsPrice ?? 0) + " Bs" : usd(priceOf(p, s.priceTypes[0]?.id))}
+                          {p.bsOnly
+                            ? num(p.bsPrice ?? 0) + " Bs"
+                            : usd(priceOf(p, s.priceTypes[0]?.id))}
                         </td>
                         <td className="px-4 py-2.5">
-                          <Badge tone={p.active ? "green" : "neutral"}>{p.active ? "Activo" : "Inactivo"}</Badge>
+                          <Badge tone={p.active ? "green" : "neutral"}>
+                            {p.active ? "Activo" : "Inactivo"}
+                          </Badge>
                         </td>
                         <td className="px-4 py-2.5 text-right">
                           <div className="flex justify-end gap-1">
@@ -171,11 +224,19 @@ function Inventario() {
                           <p className="text-sm font-medium">{p.name}</p>
                           <p className="num text-xs text-muted-foreground">{p.code}</p>
                         </div>
-                        <span className="num text-sm">{p.bsOnly ? num(p.bsPrice ?? 0) + " Bs" : usd(priceOf(p, s.priceTypes[0]?.id))}</span>
+                        <span className="num text-sm">
+                          {p.bsOnly
+                            ? num(p.bsPrice ?? 0) + " Bs"
+                            : usd(priceOf(p, s.priceTypes[0]?.id))}
+                        </span>
                       </div>
                       <div className="mt-2 flex items-center gap-2">
-                        <Badge tone={p.stock <= p.minStock ? "red" : "neutral"}>Stock {p.stock}</Badge>
-                        <Badge tone={p.active ? "green" : "neutral"}>{p.active ? "Activo" : "Inactivo"}</Badge>
+                        <Badge tone={p.stock <= p.minStock ? "red" : "neutral"}>
+                          Stock {p.stock}
+                        </Badge>
+                        <Badge tone={p.active ? "green" : "neutral"}>
+                          {p.active ? "Activo" : "Inactivo"}
+                        </Badge>
                         {can("edit_inventory") && (
                           <>
                             <Btn size="sm" className="ml-auto" onClick={() => setEdit(p)}>
@@ -199,7 +260,12 @@ function Inventario() {
       {tab === "categorias" && <Categorias />}
       {tab === "movimientos" && <Movimientos />}
 
-      <Modal open={!!edit} onClose={() => setEdit(null)} title={edit?.id ? "Editar producto" : "Nuevo producto"} wide>
+      <Modal
+        open={!!edit}
+        onClose={() => setEdit(null)}
+        title={edit?.id ? "Editar producto" : "Nuevo producto"}
+        wide
+      >
         {edit && <ProductForm draft={edit} onClose={() => setEdit(null)} />}
       </Modal>
 
@@ -311,19 +377,28 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
           <Input
             className="num"
             value={String(f.bsPrice ?? 0)}
-            onChange={(e) => setF({ ...f, bsPrice: parseFloat(e.target.value.replace(",", ".")) || 0 })}
+            onChange={(e) =>
+              setF({ ...f, bsPrice: parseFloat(e.target.value.replace(",", ".")) || 0 })
+            }
           />
         </Field>
       )}
       <Field label="Estado">
-        <Select value={f.active ? "1" : "0"} onChange={(e) => setF({ ...f, active: e.target.value === "1" })}>
+        <Select
+          value={f.active ? "1" : "0"}
+          onChange={(e) => setF({ ...f, active: e.target.value === "1" })}
+        >
           <option value="1">Activo</option>
           <option value="0">Inactivo</option>
         </Select>
       </Field>
       <div className="sm:col-span-2">
         <Field label="Descripción">
-          <Textarea rows={2} value={f.description ?? ""} onChange={(e) => setF({ ...f, description: e.target.value })} />
+          <Textarea
+            rows={2}
+            value={f.description ?? ""}
+            onChange={(e) => setF({ ...f, description: e.target.value })}
+          />
         </Field>
       </div>
       <div className="flex justify-end gap-2 sm:col-span-2">
@@ -331,7 +406,8 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
         <Btn
           variant="amber"
           onClick={() => {
-            if (!f.name?.trim() || !f.code?.trim()) return toast.error("Código y nombre son obligatorios");
+            if (!f.name?.trim() || !f.code?.trim())
+              return toast.error("Código y nombre son obligatorios");
             mutate((st) => {
               if (f.id) {
                 const ex = st.products.find((x) => x.id === f.id);
@@ -434,7 +510,11 @@ function Categorias() {
     <Card>
       <CardHead title="Categorías" />
       <div className="flex gap-2 border-b border-border p-3">
-        <Input placeholder="Nueva categoría" value={name} onChange={(e) => setName(e.target.value)} />
+        <Input
+          placeholder="Nueva categoría"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
         <Btn
           variant="amber"
           onClick={() => {
@@ -470,7 +550,8 @@ function Categorias() {
               size="sm"
               variant="ghost"
               onClick={() => {
-                if (s.products.some((p) => p.categoryId === c.id)) return toast.error("La categoría tiene productos");
+                if (s.products.some((p) => p.categoryId === c.id))
+                  return toast.error("La categoría tiene productos");
                 mutate((st) => {
                   st.categories = st.categories.filter((x) => x.id !== c.id);
                 });
@@ -492,14 +573,21 @@ function Movimientos() {
     <Card>
       <CardHead title="Historial de movimientos" />
       {s.movements.length === 0 ? (
-        <Empty title="Sin movimientos" sub="Cada entrada, salida o ajuste quedará registrado aquí." />
+        <Empty
+          title="Sin movimientos"
+          sub="Cada entrada, salida o ajuste quedará registrado aquí."
+        />
       ) : (
         <div className="divide-y divide-border">
           {s.movements.slice(0, 100).map((m) => {
             const p = s.products.find((x) => x.id === m.productId);
             return (
               <div key={m.id} className="flex flex-wrap items-center gap-3 px-4 py-2.5 text-sm">
-                <Badge tone={m.type === "entrada" ? "green" : m.type === "salida" ? "red" : "amber"}>{m.type}</Badge>
+                <Badge
+                  tone={m.type === "entrada" ? "green" : m.type === "salida" ? "red" : "amber"}
+                >
+                  {m.type}
+                </Badge>
                 <span className="flex-1 truncate">{p?.name ?? "—"}</span>
                 <span className="num">{m.qty}</span>
                 <span className="text-xs text-muted-foreground">{m.reason}</span>

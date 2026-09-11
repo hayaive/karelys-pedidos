@@ -1,9 +1,9 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { IcoAlerta, IcoOjo, IcoOjoTachado } from "@/chasis/iconos";
 import { useEffect, useState } from "react";
-import { Eye, EyeOff } from "lucide-react";
 import { login, useSession } from "@/lib/auth";
 import { Logo, useHydrated } from "@/components/app-shell";
-import { Btn, Field, Input } from "@/components/ui-kit";
+import { Aviso, Btn, Field, Input } from "@/components/ui-kit";
 import { useAppState } from "@/lib/store";
 
 export const Route = createFileRoute("/login")({
@@ -13,7 +13,10 @@ export const Route = createFileRoute("/login")({
       { title: "Iniciar sesión · Karelys Delicias" },
       { name: "description", content: "Acceso al sistema de mostrador de Karelys Delicias." },
       { property: "og:title", content: "Iniciar sesión · Karelys Delicias" },
-      { property: "og:description", content: "Acceso al sistema de mostrador de Karelys Delicias." },
+      {
+        property: "og:description",
+        content: "Acceso al sistema de mostrador de Karelys Delicias.",
+      },
     ],
   }),
   component: LoginPage,
@@ -36,16 +39,17 @@ function LoginPage() {
   return (
     <div className="grid min-h-screen place-items-center bg-sol-vela px-4">
       <div className="w-full max-w-sm">
-        <div className="rounded-xl border border-border bg-card p-7">
+        <div className="rounded-xl border border-border bg-card p-7 shadow-2">
           <div className="flex flex-col items-center gap-3 text-center">
             <Logo size={56} />
             <div>
-              <h1 className="voz text-2xl">{s.company.name}</h1>
-              <p className="text-xs text-muted-foreground">Sistema de mostrador</p>
+              <h1 className="marca text-[1.85rem] leading-tight">{s.company.name}</h1>
+              {/* La voz: la frase que explica qué hace la pantalla. */}
+              <p className="voz mt-[0.15rem] text-voz">Sistema de mostrador</p>
             </div>
           </div>
           <form
-            className="mt-7 space-y-3"
+            className="mt-7 flex flex-col gap-[0.9rem]"
             onSubmit={(e) => {
               e.preventDefault();
               const res = login(u, p);
@@ -54,7 +58,12 @@ function LoginPage() {
             }}
           >
             <Field label="Usuario">
-              <Input value={u} onChange={(e) => setU(e.target.value)} autoFocus autoComplete="username" />
+              <Input
+                value={u}
+                onChange={(e) => setU(e.target.value)}
+                autoFocus
+                autoComplete="username"
+              />
             </Field>
             <Field label="Contraseña">
               <div className="relative">
@@ -68,20 +77,24 @@ function LoginPage() {
                 <button
                   type="button"
                   onClick={() => setShow(!show)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
+                  className="absolute right-1.5 top-1/2 grid size-7 -translate-y-1/2 place-items-center rounded-sm text-texto-3 transition-colors duration-[140ms] hover:bg-sup-2 hover:text-texto"
                   aria-label="Mostrar contraseña"
                 >
-                  {show ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                  {show ? <IcoOjoTachado /> : <IcoOjo />}
                 </button>
               </div>
             </Field>
-            {err && <p className="text-xs text-rojo">{err}</p>}
-            <Btn type="submit" variant="amber" size="lg" className="w-full">
+            {err && (
+              <Aviso tone="red" icon={IcoAlerta} title={err}>
+                Revisa el usuario y la contraseña, o pídele acceso a un administrador.
+              </Aviso>
+            )}
+            <Btn type="submit" variant="amber" size="lg" bloque>
               Iniciar sesión
             </Btn>
           </form>
         </div>
-        <p className="mt-5 text-center text-[11px] tracking-wide text-texto-3">Powered by HAYAI</p>
+        <p className="mt-5 text-center text-[0.75rem] text-texto-3">Powered by HAYAI</p>
       </div>
     </div>
   );

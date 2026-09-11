@@ -15,9 +15,15 @@ export const Route = createFileRoute("/facturacion")({
   head: () => ({
     meta: [
       { title: "Facturación · Karelys Delicias" },
-      { name: "description", content: "Historial de ventas con detalle, filtros e impresión de tickets." },
+      {
+        name: "description",
+        content: "Historial de ventas con detalle, filtros e impresión de tickets.",
+      },
       { property: "og:title", content: "Facturación · Karelys Delicias" },
-      { property: "og:description", content: "Historial de ventas con detalle, filtros e impresión de tickets." },
+      {
+        property: "og:description",
+        content: "Historial de ventas con detalle, filtros e impresión de tickets.",
+      },
     ],
   }),
   component: () => (
@@ -49,10 +55,18 @@ function Facturacion() {
 
   return (
     <>
-      <PageHead title="Facturación" sub={`${s.sales.length} ventas registradas`} />
+      <PageHead
+        title="Facturación"
+        sub="Cada venta cobrada, con su ticket y su forma de pago."
+        dato={`${s.sales.length} ventas registradas`}
+      />
 
       <div className="mb-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        <Input placeholder="Buscar número o cliente" value={q} onChange={(e) => setQ(e.target.value)} />
+        <Input
+          placeholder="Buscar número o cliente"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
         <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
         <Select value={method} onChange={(e) => setMethod(e.target.value)}>
           <option value="all">Todos los métodos</option>
@@ -84,7 +98,8 @@ function Facturacion() {
                     <span className="num">{x.number}</span> · {x.customerName}
                   </p>
                   <p className="num text-xs text-muted-foreground">
-                    {dt(x.createdAt)} · {x.userName} · {x.payments.map((p) => p.methodName).join(", ")}
+                    {dt(x.createdAt)} · {x.userName} ·{" "}
+                    {x.payments.map((p) => p.methodName).join(", ")}
                   </p>
                 </div>
                 <div className="text-right">
@@ -106,13 +121,20 @@ function Facturacion() {
         )}
       </Card>
 
-      <Modal open={!!detail} onClose={() => setDetail(null)} title={`Venta ${detail?.number ?? ""}`} wide>
+      <Modal
+        open={!!detail}
+        onClose={() => setDetail(null)}
+        title={`Venta ${detail?.number ?? ""}`}
+        wide
+      >
         {detail && (
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2 text-sm">
               <p className="text-muted-foreground">Cliente: {detail.customerName}</p>
               <p className="text-muted-foreground">Cajero: {detail.userName}</p>
-              <p className="num text-muted-foreground">Tasa usada: {num(detail.rateSnapshot.usd)} Bs/USD</p>
+              <p className="num text-muted-foreground">
+                Tasa usada: {num(detail.rateSnapshot.usd)} Bs/USD
+              </p>
               <div className="divide-y divide-border rounded-md border border-border">
                 {detail.items.map((i, k) => (
                   <div key={k} className="flex justify-between px-3 py-2">

@@ -1,9 +1,8 @@
 import { useAppState } from "@/lib/store";
+import { IcoImprimir } from "@/chasis/iconos";
 import { dt, num } from "@/lib/format";
 import type { Sale } from "@/lib/types";
 import { Btn } from "./ui-kit";
-import { Printer } from "lucide-react";
-
 export function TicketPreview({ sale }: { sale: Sale }) {
   const s = useAppState();
   return (
@@ -36,7 +35,9 @@ export function TicketPreview({ sale }: { sale: Sale }) {
               <span>
                 {i.qty} x {i.bsOnly ? num(i.unitPriceBs ?? 0) + " Bs" : "$" + num(i.unitPriceUsd)}
               </span>
-              <span>{i.bsOnly ? num((i.unitPriceBs ?? 0) * i.qty) + " Bs" : "$" + num(i.subtotalUsd)}</span>
+              <span>
+                {i.bsOnly ? num((i.unitPriceBs ?? 0) * i.qty) + " Bs" : "$" + num(i.subtotalUsd)}
+              </span>
             </div>
           </div>
         ))}
@@ -64,7 +65,7 @@ export function TicketPreview({ sale }: { sale: Sale }) {
       </div>
       <div className="flex justify-center">
         <Btn variant="amber" onClick={() => window.print()}>
-          <Printer className="size-4" /> Imprimir ticket
+          <IcoImprimir /> Imprimir ticket
         </Btn>
       </div>
     </div>

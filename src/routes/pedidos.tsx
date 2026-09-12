@@ -1,10 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { IcoMas, IcoPapelera } from "@/chasis/iconos";
+import { IcoImprimir, IcoMas, IcoPapelera } from "@/chasis/iconos";
 import { useState } from "react";
 import { toast } from "sonner";
 import { AppShell, PageHead } from "@/components/app-shell";
 import { useSession } from "@/lib/auth";
 import { POS } from "@/components/pos";
+import { TicketPreview } from "@/components/ticket";
 import {
   Badge,
   Btn,
@@ -65,6 +66,7 @@ function Pedidos() {
   const [editing, setEditing] = useState<Order | null>(null);
   const [del, setDel] = useState<Order | null>(null);
   const [depositingFor, setDepositingFor] = useState<Order | null>(null);
+  const [printingFor, setPrintingFor] = useState<Order | null>(null);
   const [filter, setFilter] = useState<string>("activos");
 
   useShortcuts({
@@ -215,6 +217,11 @@ function Pedidos() {
                     </span>
                   )}
                 </div>
+                <div className="mt-2">
+                  <Btn size="sm" variant="ghost" onClick={() => setPrintingFor(o)}>
+                    <IcoImprimir /> Imprimir ticket
+                  </Btn>
+                </div>
                 {o.status !== "procesado" && o.status !== "cancelado" && (
                   <div className="mt-3 flex flex-wrap gap-2">
                     {can("process_orders") && (
@@ -275,6 +282,14 @@ function Pedidos() {
         {depositingFor && (
           <AddDeposit orderId={depositingFor.id} onClose={() => setDepositingFor(null)} />
         )}
+      </Modal>
+
+      <Modal
+        open={!!printingFor}
+        onClose={() => setPrintingFor(null)}
+        title={`Ticket · ${printingFor?.number ?? ""}`}
+      >
+        {printingFor && <TicketPreview order={printingFor} />}
       </Modal>
     </>
   );

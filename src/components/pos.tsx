@@ -307,7 +307,9 @@ export function POS({
             ) : (
               <div className="space-y-2">
                 <div className="relative">
-                  <IcoBuscar />
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-texto-3">
+                    <IcoBuscar />
+                  </span>
                   <Input
                     id="cust-search"
                     className="pl-9"
@@ -361,7 +363,7 @@ export function POS({
                 {/* En teléfono se apilan: «Registrar nuevo cliente» no cabe a media fila. */}
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Btn
-                    className="flex-1"
+                    className="h-11 sm:h-[2.45rem] sm:flex-1"
                     onClick={() => {
                       setCustomer(null);
                       setCustQ("");
@@ -370,7 +372,11 @@ export function POS({
                   >
                     Consumidor final
                   </Btn>
-                  <Btn variant="amber" className="flex-1" onClick={() => setNewCustOpen(true)}>
+                  <Btn
+                    variant="amber"
+                    className="h-11 sm:h-[2.45rem] sm:flex-1"
+                    onClick={() => setNewCustOpen(true)}
+                  >
                     <IcoPersonaMas /> Registrar nuevo cliente
                   </Btn>
                 </div>
@@ -391,7 +397,9 @@ export function POS({
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
             <div className="relative flex-1">
-              <IcoBuscar />
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-texto-3">
+                <IcoBuscar />
+              </span>
               <Input
                 id="pos-search"
                 className="pl-9"
@@ -412,7 +420,7 @@ export function POS({
               ))}
             </Select>
           </div>
-          <div className="mt-2 flex gap-1.5 overflow-x-auto pb-1">
+          <div className="mt-2 flex flex-wrap gap-1.5">
             <Chip active={cat === "all"} onClick={() => setCat("all")}>
               Todo
             </Chip>

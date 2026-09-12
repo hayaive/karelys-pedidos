@@ -1,3 +1,13 @@
+import { makeMoney } from "./money";
+import {
+  buildDeposit,
+  depositsAsPayments,
+  depositsOfDay,
+  linkDepositsToSale,
+  orderBalance,
+  type NewDepositInput,
+} from "./orders";
+import { itemsTotals, priceBandCheck, rateSnapshot } from "./pricing";
 import { getState, logAudit, mutate } from "./store";
 import { uid } from "./seed";
 import type {
@@ -8,26 +18,56 @@ import type {
   Order,
   OrderStatus,
   Payment,
-  Product,
   RateSource,
   Sale,
 } from "./types";
 
+/**
+ * Reexportaciones de compatibilidad. La resolución de precios y la conversión a
+ * bolívares viven ahora en lib/pricing y lib/money; este módulo se queda con
+ * los mutadores (crear venta, pedido, movimientos, cierre).
+ */
+export {
+  bcvRate,
+  coldCakeCheck,
+  coldCakePriceGroups,
+  companyPriceRule,
+  currentRate,
+  isColdCake,
+  itemsTotals,
+  lineBs,
+  moneyOf,
+  moneyOfSale,
+  ownPriceOf,
+  priceAlertOf,
+  priceAlerts,
+  priceBandCheck,
+  priceGroupOf,
+  priceOf,
+  priceRuleOf,
+  rateSnapshot,
+  resolvePrices,
+  totalsOf,
+  unitBs,
+} from "./pricing";
+export { roundBs } from "./money";
+export {
+  activeDeposits,
+  addOrderDeposit,
+  depositTotalUsd,
+  depositsAsPayments,
+  depositsOfDay,
+  orderBalance,
+  ordersWithBalance,
+  voidOrderDeposit,
+} from "./orders";
+
 /* ── Tasas ────────────────────────────────────────────── */
 
-export function currentRate(s: AppState, source: RateSource) {
-  return s.rates.filter((r) => r.source === source).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-}
-
-export function rateSnapshot(s: AppState) {
-  return {
-    usd: currentRate(s, "BCV_USD")?.value ?? 0,
-    eur: currentRate(s, "BCV_EUR")?.value ?? 0,
-    binance: currentRate(s, "BINANCE")?.value ?? 0,
-    at: new Date().toISOString(),
-  };
-}
-
+/**
+ * Publica una tasa nueva. Nunca se sobreescribe la anterior: el historial es lo
+ * que permite auditar a qué tasa se cobró cada venta y cada abono.
+ */
 export function setRate(source: RateSource, value: number, automatic = false) {
   mutate((s) => {
     s.rates.unshift({
@@ -60,37 +100,6 @@ export async function fetchRatesFromApi(): Promise<{ ok: boolean; message: strin
   } catch {
     return { ok: false, message: "No se pudo consultar la API. Edita las tasas manualmente." };
   }
-}
-
-/* ── Precios ──────────────────────────────────────────── */
-
-export function priceOf(p: Product, priceTypeId: ID) {
-  return p.prices.find((x) => x.priceTypeId === priceTypeId)?.amount ?? p.prices[0]?.amount ?? 0;
-}
-
-export function roundBs(amount: number, step = 1) {
-  if (step <= 0) return amount;
-  return Math.round(amount / step) * step;
-}
-
-/** Regla tortas frías: el equivalente USD debe quedar entre min y max. */
-export function coldCakeCheck(s: AppState, usdPrice: number, rate: number) {
-  const { coldCakeMin: min, coldCakeMax: max, bsRounding } = s.company;
-  const rawBs = usdPrice * rate;
-  let finalBs = roundBs(rawBs, bsRounding);
-  let back = rate ? finalBs / rate : 0;
-  if (back < min) {
-    finalBs = Math.ceil((min * rate) / (bsRounding || 1)) * (bsRounding || 1);
-    back = rate ? finalBs / rate : 0;
-  } else if (back > max) {
-    finalBs = Math.floor((max * rate) / (bsRounding || 1)) * (bsRounding || 1);
-    back = rate ? finalBs / rate : 0;
-  }
-  return { rawBs, finalBs, usdBack: back, ok: back >= min - 1e-9 && back <= max + 1e-9, min, max };
-}
-
-export function isColdCake(s: AppState, p: Product) {
-  return p.categoryId === s.company.coldCakeCategory;
 }
 
 /* ── Inventario ───────────────────────────────────────── */
@@ -133,14 +142,19 @@ export function applyMovement(
 
 /* ── Ventas ───────────────────────────────────────────── */
 
-export function totalsOf(items: LineItem[], rate: number) {
-  const totalUsd = items.reduce((a, i) => a + i.subtotalUsd, 0);
-  const bsOnly = items.filter((i) => i.bsOnly).reduce((a, i) => a + (i.unitPriceBs ?? 0) * i.qty, 0);
-  const convertible = items.filter((i) => !i.bsOnly).reduce((a, i) => a + i.subtotalUsd, 0);
-  const totalBs = convertible * rate + bsOnly;
-  return { totalUsd, totalBs };
-}
-
+/**
+ * Registra la venta.
+ *
+ * El total en Bs se calcula aquí con la tasa del momento y se congela en
+ * `Sale.rateSnapshot`, porque un comprobante emitido tiene que poder
+ * reimprimirse con la tasa que realmente se cobró.
+ *
+ * Abonos: si se procesa un pedido con abonos vigentes, éstos se incorporan
+ * automáticamente como pagos de la venta (con su fecha y su tasa originales) y
+ * cuentan para cubrir el total. **La UI de cobro debe cobrar sólo
+ * `orderBalance(order).balanceUsd`**, no el total del pedido; si cobra el total
+ * completo, el importe de los abonos aparecerá como vuelto.
+ */
 export function createSale(input: {
   items: LineItem[];
   customerId: ID | null;
@@ -152,21 +166,34 @@ export function createSale(input: {
   const s = getState();
   if (!input.items.length) return { ok: false, error: "El carrito está vacío" };
   const snap = rateSnapshot(s);
-  const { totalUsd, totalBs } = totalsOf(input.items, snap.usd);
-  const paid = input.payments.reduce((a, p) => a + p.usdEquivalent, 0);
+  const money = makeMoney({ rate: snap.usd, bsRounding: s.company.bsRounding });
+  const { totalUsd, totalBs } = itemsTotals(input.items, money);
+
+  const order = input.orderId ? s.orders.find((o) => o.id === input.orderId) : undefined;
+  const alreadyIncluded = new Set(
+    input.payments.map((p) => p.fromOrderDepositId).filter(Boolean) as string[],
+  );
+  const depositPayments = order
+    ? depositsAsPayments(order).filter((p) => !alreadyIncluded.has(p.fromOrderDepositId!))
+    : [];
+  const payments = [...depositPayments, ...input.payments];
+
+  const paid = payments.reduce((a, p) => a + p.usdEquivalent, 0);
   if (Math.abs(paid - totalUsd) > 0.02 && paid < totalUsd)
     return { ok: false, error: "Los pagos no cubren el total de la venta" };
 
+  // Banda de precio: sólo bloquean los grupos que declaran una (el precio
+  // general de tortas frías). Los sabores con precio propio y diferenciado
+  // viven por encima de esa banda a propósito y no se validan contra ella.
   for (const it of input.items) {
     const p = s.products.find((x) => x.id === it.productId);
-    if (p && isColdCake(s, p)) {
-      const chk = coldCakeCheck(s, it.unitPriceUsd, snap.usd);
-      if (!chk.ok)
-        return {
-          ok: false,
-          error: `"${it.name}" queda fuera del rango permitido de $${s.company.coldCakeMin} – $${s.company.coldCakeMax}`,
-        };
-    }
+    if (!p) continue;
+    const chk = priceBandCheck(s, p, it.unitPriceUsd, snap.usd);
+    if (chk.enforced && !chk.ok)
+      return {
+        ok: false,
+        error: `"${it.name}" queda fuera del rango permitido de $${chk.min} – $${chk.max}`,
+      };
   }
 
   let sale: Sale | undefined;
@@ -183,7 +210,7 @@ export function createSale(input: {
       userId: user?.id ?? "system",
       userName: user?.fullName ?? "Sistema",
       items: input.items,
-      payments: input.payments,
+      payments,
       totalUsd,
       totalBs,
       changeUsd: Math.max(0, Math.round((paid - totalUsd) * 100) / 100),
@@ -202,9 +229,14 @@ export function createSale(input: {
       if (o) {
         o.status = "procesado";
         o.saleId = sale!.id;
+        linkDepositsToSale(st, input.orderId, sale!.id);
       }
     }
-    logAudit("venta_creada", "sale", sale.id, { number, totalUsd });
+    logAudit("venta_creada", "sale", sale.id, {
+      number,
+      totalUsd,
+      depositUsd: depositPayments.reduce((a, p) => a + p.usdEquivalent, 0) || undefined,
+    });
   });
   return { ok: true, sale };
 }
@@ -224,16 +256,35 @@ export function cancelSale(saleId: ID, reason: string) {
 
 /* ── Pedidos ──────────────────────────────────────────── */
 
+/**
+ * Crea el pedido y, si el cliente adelantó dinero, registra el abono en el
+ * mismo acto. Si el abono es inválido no se crea nada: no queremos pedidos a
+ * medias con el cobro sin registrar.
+ */
 export function createOrder(input: {
   items: LineItem[];
   customerId: ID | null;
   customerName: string;
   note?: string;
-}) {
+  /** Abono adelantado opcional al momento de registrar el pedido. */
+  deposit?: NewDepositInput;
+}): { ok: boolean; order?: Order; error?: string } {
+  const s = getState();
+  if (!input.items.length) return { ok: false, error: "El pedido no tiene productos" };
+  const totalUsd = input.items.reduce((a, i) => a + i.subtotalUsd, 0);
+
+  const built = input.deposit ? buildDeposit(s, input.deposit) : null;
+  if (built && !built.ok) return { ok: false, error: built.error };
+  if (built?.ok && built.deposit.usdEquivalent > totalUsd + 0.02)
+    return {
+      ok: false,
+      error: `El abono ($${built.deposit.usdEquivalent.toFixed(2)}) supera el total del pedido ($${totalUsd.toFixed(2)})`,
+    };
+
   let order: Order | undefined;
-  mutate((s) => {
-    const number = s.company.orderPrefix + String(s.company.orderNext).padStart(5, "0");
-    s.company.orderNext += 1;
+  mutate((st) => {
+    const number = st.company.orderPrefix + String(st.company.orderNext).padStart(5, "0");
+    st.company.orderNext += 1;
     order = {
       id: uid(),
       number,
@@ -241,17 +292,27 @@ export function createOrder(input: {
       customerId: input.customerId,
       customerName: input.customerName || "Consumidor final",
       items: input.items,
-      totalUsd: input.items.reduce((a, i) => a + i.subtotalUsd, 0),
+      totalUsd,
       note: input.note,
       status: "pendiente",
-      userId: s.sessionUserId ?? "system",
+      userId: st.sessionUserId ?? "system",
+      deposits: built?.ok ? [built.deposit] : [],
     };
-    s.orders.unshift(order);
-    logAudit("pedido_creado", "order", order.id, { number });
+    st.orders.unshift(order);
+    logAudit("pedido_creado", "order", order.id, {
+      number,
+      totalUsd,
+      abonoUsd: built?.ok ? built.deposit.usdEquivalent : undefined,
+    });
   });
-  return order!;
+  return { ok: true, order: order! };
 }
 
+/**
+ * Edita el pedido y recalcula su total. Los abonos no se tocan: si el pedido se
+ * reduce por debajo de lo abonado, `orderBalance()` lo reporta como
+ * `overpaidUsd` (excedente a devolver) en lugar de dejar un saldo negativo.
+ */
 export function updateOrder(id: ID, patch: Partial<Order>) {
   mutate((s) => {
     const o = s.orders.find((x) => x.id === id);
@@ -266,11 +327,26 @@ export function setOrderStatus(id: ID, status: OrderStatus) {
   updateOrder(id, { status });
 }
 
-export function deleteOrder(id: ID) {
-  mutate((s) => {
-    s.orders = s.orders.filter((o) => o.id !== id || o.status === "procesado");
+/**
+ * Elimina un pedido. Se niega si tiene abonos vigentes: borrarlo destruiría el
+ * registro de un dinero que ya entró a caja. En ese caso hay que anular primero
+ * el abono (devolución) o cancelar el pedido, que sí conserva el rastro.
+ */
+export function deleteOrder(id: ID): { ok: boolean; error?: string } {
+  const s = getState();
+  const order = s.orders.find((o) => o.id === id);
+  if (!order) return { ok: false, error: "El pedido no existe" };
+  const balance = orderBalance(order);
+  if (balance.depositUsd > 0.001)
+    return {
+      ok: false,
+      error: `El pedido tiene $${balance.depositUsd.toFixed(2)} abonados. Anula el abono o cancela el pedido en lugar de eliminarlo.`,
+    };
+  mutate((st) => {
+    st.orders = st.orders.filter((o) => o.id !== id || o.status === "procesado");
     logAudit("pedido_eliminado", "order", id);
   });
+  return { ok: true };
 }
 
 /* ── Clientes ─────────────────────────────────────────── */
@@ -304,27 +380,59 @@ export function upsertCustomer(c: Partial<Customer> & { cedula: string; name: st
 
 /* ── Cierre de caja ───────────────────────────────────── */
 
+/**
+ * Cierre del día. Cuenta el dinero por **fecha de recepción**, no por fecha de
+ * venta: un abono cobrado el lunes pertenece a la caja del lunes aunque el
+ * pedido se facture el viernes. Para eso cada pago lleva `at` y los abonos que
+ * se convierten en pago de venta se marcan con `fromOrderDepositId`, de modo que
+ * se cuentan una sola vez, el día del abono.
+ */
 export function closureDraft(s: AppState, dayISO: string) {
-  const sales = s.sales.filter((x) => x.status === "completada" && x.createdAt.slice(0, 10) === dayISO);
+  const sales = s.sales.filter(
+    (x) => x.status === "completada" && x.createdAt.slice(0, 10) === dayISO,
+  );
+
+  /** Entradas de efectivo del día, por método. */
+  const received: { methodId: ID; usd: number }[] = [];
+  for (const sale of s.sales) {
+    if (sale.status !== "completada") continue;
+    for (const p of sale.payments) {
+      if (p.fromOrderDepositId) continue; // ya se contó el día del abono
+      if ((p.at ?? sale.createdAt).slice(0, 10) !== dayISO) continue;
+      received.push({ methodId: p.methodId, usd: p.usdEquivalent });
+    }
+  }
+  const dayDeposits = depositsOfDay(s, dayISO);
+  for (const { deposit } of dayDeposits) {
+    received.push({ methodId: deposit.methodId, usd: deposit.usdEquivalent });
+  }
+
   // Descuenta el vuelto entregado del método con el que se pagó de más (el último pago).
   const changeByMethod = new Map<string, number>();
   for (const sale of sales) {
-    const change = sale.changeUsd ?? Math.max(0, sale.payments.reduce((a, p) => a + p.usdEquivalent, 0) - sale.totalUsd);
+    const change =
+      sale.changeUsd ??
+      Math.max(0, sale.payments.reduce((a, p) => a + p.usdEquivalent, 0) - sale.totalUsd);
     const last = sale.payments[sale.payments.length - 1];
-    if (change > 0.001 && last) changeByMethod.set(last.methodId, (changeByMethod.get(last.methodId) ?? 0) + change);
+    if (change > 0.001 && last)
+      changeByMethod.set(last.methodId, (changeByMethod.get(last.methodId) ?? 0) + change);
   }
+
   const byMethod = s.paymentMethods.map((m) => {
-    const gross = sales
-      .flatMap((x) => x.payments)
-      .filter((p) => p.methodId === m.id)
-      .reduce((a, p) => a + p.usdEquivalent, 0);
+    const gross = received.filter((r) => r.methodId === m.id).reduce((a, r) => a + r.usd, 0);
     const expected = gross - (changeByMethod.get(m.id) ?? 0);
     return { methodId: m.id, methodName: m.name, expected, received: expected };
   });
+
   return {
     sales,
     byMethod,
+    /** Facturado del día (suma de los totales de las ventas). */
     totalUsd: sales.reduce((a, x) => a + x.totalUsd, 0),
     totalBs: sales.reduce((a, x) => a + x.totalBs, 0),
+    /** Abonos de pedidos recibidos hoy (aún sin facturar). */
+    depositUsd: dayDeposits.reduce((a, x) => a + x.deposit.usdEquivalent, 0),
+    /** Efectivo que debe haber en caja hoy. Es lo que se compara al cerrar. */
+    expectedUsd: byMethod.reduce((a, m) => a + m.expected, 0),
   };
 }

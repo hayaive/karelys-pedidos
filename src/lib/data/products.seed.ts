@@ -100,9 +100,11 @@ export const SEED_PRODUCTS: SeedProduct[] = [
     "detal": 1.36
   },
   {
+    // Pertenece a la familia de tortas frías con precio propio y diferenciado
+    // (ver lib/pricing-rules). Antes estaba en "Postres".
     "code": "P015",
-    "name": "torta-quesillo",
-    "category": "Postres",
+    "name": "Torta Quesillo",
+    "category": "Tortas Frías",
     "mayor": 1.3,
     "detal": 1.36
   },
@@ -406,5 +408,15 @@ export const SEED_PRODUCTS: SeedProduct[] = [
     "category": "Fiesta",
     "mayor": 1.5,
     "detal": 1.5
+  },
+  {
+    // Segundo sabor con precio propio y diferenciado dentro de tortas frías.
+    // No venía en el Excel original; precio alineado a "Torta Quesillo"
+    // (pendiente de confirmar con el negocio).
+    "code": "P059",
+    "name": "Oreo y Brownie",
+    "category": "Tortas Frías",
+    "mayor": 1.3,
+    "detal": 1.36
   }
 ];

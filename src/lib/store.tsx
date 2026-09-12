@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { runMigrations } from "./migrations";
 import { buildSeed, uid } from "./seed";
 import type { AppState } from "./types";
 
@@ -24,7 +25,24 @@ export function loadFromDisk() {
     if (raw) {
       const parsed = JSON.parse(raw) as AppState;
       const seed = buildSeed();
-      state = { ...seed, ...parsed };
+      // La fusión es superficial salvo en `company`: ahí sí hay que combinar
+      // campo a campo, porque un objeto guardado por una versión anterior no
+      // trae las claves nuevas y reemplazaría al de la semilla por completo.
+      state = { ...seed, ...parsed, company: { ...seed.company, ...(parsed.company ?? {}) } };
+
+      // Migraciones de esquema (ver lib/migrations). Idempotentes.
+      const migration = runMigrations(state);
+      if (migration.applied.length) {
+        for (const step of migration.applied) {
+          logAudit("migracion_esquema", "app_state", step.name, {
+            from: migration.from,
+            to: migration.to,
+            notes: step.notes,
+          });
+        }
+        persist();
+      }
+
       // Corrección de tasas iniciales obsoletas (412,50 / 485,30 / 415,20)
       if (state.rates.some((r) => r.value === 412.5 || r.value === 485.3 || r.value === 415.2)) {
         state.rates = [...seed.rates, ...state.rates.filter((r) => ![412.5, 485.3, 415.2].includes(r.value))];

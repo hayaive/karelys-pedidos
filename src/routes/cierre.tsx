@@ -48,7 +48,10 @@ function Cierre() {
       (received[m.methodId] !== undefined ? parseFloat(received[m.methodId] || "0") : m.expected),
     0,
   );
-  const diff = recTotal - draft.totalUsd;
+  // Se compara contra el efectivo esperado (ventas del día + abonos recibidos
+  // hoy − vueltos), no contra lo facturado: un abono entra en caja el día en
+  // que se recibe, aunque el pedido se facture más adelante.
+  const diff = recTotal - draft.expectedUsd;
 
   return (
     <>
@@ -107,7 +110,7 @@ function Cierre() {
           <div className="flex items-center justify-between border-t border-border px-4 py-3">
             <span className="text-sm font-medium">Esperado / Recibido / Diferencia</span>
             <span className="num text-sm">
-              {usd(draft.totalUsd)} · {usd(recTotal)} ·{" "}
+              {usd(draft.expectedUsd)} · {usd(recTotal)} ·{" "}
               <span className={diff === 0 ? "text-verde" : "text-rojo"}>{usd(diff)}</span>
             </span>
           </div>
@@ -151,7 +154,7 @@ function Cierre() {
                               ? parseFloat(received[m.methodId] || "0")
                               : m.expected,
                         })),
-                        expectedUsd: draft.totalUsd,
+                        expectedUsd: draft.expectedUsd,
                         receivedUsd: recTotal,
                         differenceUsd: diff,
                         note,

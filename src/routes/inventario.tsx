@@ -19,6 +19,7 @@ import {
 } from "@/components/ui-kit";
 import { logAudit, mutate, useAppState } from "@/lib/store";
 import { addMovement, priceOf } from "@/lib/business";
+import { attachDefaultPriceGroup } from "@/lib/catalog";
 import { dt, num, usd } from "@/lib/format";
 import { uid } from "@/lib/seed";
 import type { Product } from "@/lib/types";
@@ -185,7 +186,7 @@ function Inventario() {
                         <td className="num px-4 py-2.5 text-right">
                           {p.bsOnly
                             ? num(p.bsPrice ?? 0) + " Bs"
-                            : usd(priceOf(p, s.priceTypes[0]?.id))}
+                            : usd(priceOf(s, p, s.priceTypes[0]?.id))}
                         </td>
                         <td className="px-4 py-2.5">
                           <Badge tone={p.active ? "green" : "neutral"}>
@@ -227,7 +228,7 @@ function Inventario() {
                         <span className="num text-sm">
                           {p.bsOnly
                             ? num(p.bsPrice ?? 0) + " Bs"
-                            : usd(priceOf(p, s.priceTypes[0]?.id))}
+                            : usd(priceOf(s, p, s.priceTypes[0]?.id))}
                         </span>
                       </div>
                       <div className="mt-2 flex items-center gap-2">
@@ -411,7 +412,11 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
             mutate((st) => {
               if (f.id) {
                 const ex = st.products.find((x) => x.id === f.id);
-                if (ex) Object.assign(ex, f);
+                if (ex) {
+                  Object.assign(ex, f);
+                  // Si pasó a una familia con precio general, hereda el grupo.
+                  attachDefaultPriceGroup(st, ex);
+                }
                 logAudit("producto_editado", "product", f.id);
               } else {
                 const p: Product = {
@@ -429,6 +434,7 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
                   prices: f.prices ?? [],
                   createdAt: new Date().toISOString(),
                 };
+                attachDefaultPriceGroup(st, p);
                 st.products.unshift(p);
                 logAudit("producto_creado", "product", p.id);
               }

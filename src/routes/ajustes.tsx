@@ -23,6 +23,7 @@ import {
   Select,
 } from "@/components/ui-kit";
 import { logAudit, mutate, resetDatabase, useAppState } from "@/lib/store";
+import { attachDefaultPriceGroup } from "@/lib/catalog";
 import { uid } from "@/lib/seed";
 import { dt, num } from "@/lib/format";
 import { ALL_PERMISSIONS, type Permission, type User } from "@/lib/types";
@@ -749,10 +750,11 @@ function Datos() {
                       priceTypeId: pt.id,
                       amount: parseFloat((i === 0 ? mayor : detal) || mayor || "0") || 0,
                     }));
-                    if (existing)
+                    if (existing) {
                       Object.assign(existing, { name: name.trim(), categoryId: cat.id, prices });
-                    else
-                      st.products.push({
+                      attachDefaultPriceGroup(st, existing);
+                    } else {
+                      const nuevo = {
                         id: uid(),
                         code: code.trim(),
                         name: name.trim(),
@@ -762,7 +764,11 @@ function Datos() {
                         active: true,
                         prices,
                         createdAt: new Date().toISOString(),
-                      });
+                      };
+                      // Mantiene la invariante de las familias con precio general.
+                      attachDefaultPriceGroup(st, nuevo);
+                      st.products.push(nuevo);
+                    }
                     count++;
                   }
                   logAudit("importacion_productos", "product", "csv", { count });

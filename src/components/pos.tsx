@@ -11,11 +11,10 @@ import {
 import { toast } from "sonner";
 import { useAppState } from "@/lib/store";
 import {
-  coldCakeCheck,
   createOrder,
   createSale,
   currentRate,
-  isColdCake,
+  priceBandCheck,
   priceOf,
   totalsOf,
 } from "@/lib/business";
@@ -100,13 +99,13 @@ export function POS({
       setCustomizeFor(p);
       return;
     }
-    const unit = p.bsOnly ? 0 : priceOf(p, priceTypeId);
-    if (isColdCake(s, p)) {
-      const chk = coldCakeCheck(s, unit, rate);
-      if (!chk.ok) {
-        toast.error(`Precio fuera del rango $${chk.min} – $${chk.max} para tortas frías`);
-        return;
-      }
+    const unit = p.bsOnly ? 0 : priceOf(s, p, priceTypeId);
+    // Sólo bloquean los grupos de precio que declaran banda (el precio general
+    // de tortas frías); los sabores diferenciados quedan fuera a propósito.
+    const chk = priceBandCheck(s, p, unit, rate);
+    if (chk.enforced && !chk.ok) {
+      toast.error(`Precio fuera del rango $${chk.min} – $${chk.max} para ${p.name}`);
+      return;
     }
     const extra = customization ? (p.customizationPrice ?? 0) : 0;
     setItems((prev) => {
@@ -154,12 +153,13 @@ export function POS({
 
   function saveOrder() {
     if (!items.length) return toast.error("Agrega productos al pedido");
-    createOrder({
+    const res = createOrder({
       items,
       customerId: customer?.id ?? null,
       customerName: customer?.name ?? "Consumidor final",
       note,
     });
+    if (!res.ok) return toast.error(res.error!);
     toast.success("Pedido registrado como pendiente");
     setItems([]);
     setCustomer(null);
@@ -357,7 +357,7 @@ export function POS({
           {showResults && (
             <div className="mt-3 max-h-80 divide-y divide-border overflow-y-auto rounded-md border border-border">
               {products.slice(0, 40).map((p) => {
-                const price = p.bsOnly ? null : priceOf(p, priceTypeId);
+                const price = p.bsOnly ? null : priceOf(s, p, priceTypeId);
                 const low = !p.isCombo && p.stock <= p.minStock;
                 return (
                   <button

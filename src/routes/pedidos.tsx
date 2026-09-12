@@ -211,8 +211,9 @@ function Pedidos() {
         message={`¿Eliminar el pedido ${del?.number}? Esta acción no se puede deshacer.`}
         onCancel={() => setDel(null)}
         onConfirm={() => {
-          deleteOrder(del!.id);
-          toast.success("Pedido eliminado");
+          const res = deleteOrder(del!.id);
+          if (!res.ok) toast.error(res.error!);
+          else toast.success("Pedido eliminado");
           setDel(null);
         }}
       />

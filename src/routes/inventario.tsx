@@ -348,9 +348,12 @@ function PriceAlertAviso({ alert, canFix }: { alert: PriceAlert; canFix: boolean
 
 /**
  * Precios de las 3 unidades de precio de tortas frías (el genérico y los dos
- * diferenciados). Es el único lugar donde tiene sentido cambiar el precio que
- * afecta a los 13 sabores a la vez: el formulario de un sabor individual ya no
- * tiene efecto sobre la venta (ver aviso en `ProductForm`).
+ * diferenciados). Cada unidad de precio agrupa uno o más productos que
+ * comparten el mismo precio; hoy cada grupo tiene un único producto, pero el
+ * agrupamiento se mantiene por si en el futuro se agregan más productos al
+ * mismo grupo. Este es el único lugar donde tiene sentido cambiar el precio
+ * de un grupo: el formulario de un producto individual ya no tiene efecto
+ * sobre la venta (ver aviso en `ProductForm`).
  */
 function PreciosAgrupados({ canEdit }: { canEdit: boolean }) {
   const s = useAppState();
@@ -360,7 +363,7 @@ function PreciosAgrupados({ canEdit }: { canEdit: boolean }) {
     <Card>
       <CardHead
         title="Precios agrupados"
-        sub="Editar aquí cambia el precio de todos los sabores/productos de cada grupo a la vez."
+        sub="Editar aquí cambia el precio de todos los productos que comparten este grupo de precio."
       />
       {groups.length === 0 ? (
         <Empty title="Sin grupos de precio" sub="Aún no hay unidades de precio configuradas." />

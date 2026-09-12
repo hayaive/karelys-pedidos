@@ -19,8 +19,8 @@ import {
   Textarea,
 } from "@/components/ui-kit";
 import { logAudit, mutate, useAppState } from "@/lib/store";
-import { addMovement, priceOf } from "@/lib/business";
-import { attachDefaultPriceGroup, applyPriceAlertFix } from "@/lib/catalog";
+import { addMovement, coldCakePriceGroups, priceOf } from "@/lib/business";
+import { attachDefaultPriceGroup, applyPriceAlertFix, setPriceGroupAmount } from "@/lib/catalog";
 import { priceAlerts } from "@/lib/pricing";
 import { dt, num, usd } from "@/lib/format";
 import { uid } from "@/lib/seed";
@@ -52,7 +52,9 @@ export const Route = createFileRoute("/inventario")({
 function Inventario() {
   const s = useAppState();
   const { can } = useSession();
-  const [tab, setTab] = useState<"productos" | "categorias" | "movimientos">("productos");
+  const [tab, setTab] = useState<"productos" | "precios" | "categorias" | "movimientos">(
+    "productos",
+  );
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("all");
   const [stockFilter, setStockFilter] = useState("all");
@@ -112,7 +114,7 @@ function Inventario() {
       )}
 
       <div className="mb-4 flex gap-[0.15rem] overflow-x-auto border-b border-border">
-        {(["productos", "categorias", "movimientos"] as const).map((t) => (
+        {(["productos", "precios", "categorias", "movimientos"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -274,6 +276,7 @@ function Inventario() {
         </>
       )}
 
+      {tab === "precios" && <PreciosAgrupados canEdit={can("edit_inventory")} />}
       {tab === "categorias" && <Categorias />}
       {tab === "movimientos" && <Movimientos />}
 
@@ -343,6 +346,74 @@ function PriceAlertAviso({ alert, canFix }: { alert: PriceAlert; canFix: boolean
   );
 }
 
+/**
+ * Precios de las 3 unidades de precio de tortas frías (el genérico y los dos
+ * diferenciados). Es el único lugar donde tiene sentido cambiar el precio que
+ * afecta a los 13 sabores a la vez: el formulario de un sabor individual ya no
+ * tiene efecto sobre la venta (ver aviso en `ProductForm`).
+ */
+function PreciosAgrupados({ canEdit }: { canEdit: boolean }) {
+  const s = useAppState();
+  const groups = coldCakePriceGroups(s);
+
+  return (
+    <Card>
+      <CardHead
+        title="Precios agrupados"
+        sub="Editar aquí cambia el precio de todos los sabores/productos de cada grupo a la vez."
+      />
+      {groups.length === 0 ? (
+        <Empty title="Sin grupos de precio" sub="Aún no hay unidades de precio configuradas." />
+      ) : (
+        <div className="divide-y divide-border">
+          {groups.map(({ group, products }) => (
+            <div
+              key={group.id}
+              className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+            >
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{group.name}</p>
+                <p className="text-xs text-muted-foreground">
+                  {products.length} producto{products.length === 1 ? "" : "s"} con este precio
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-2 sm:flex sm:shrink-0">
+                {s.priceTypes.map((pt) => {
+                  const amount = group.prices.find((x) => x.priceTypeId === pt.id)?.amount ?? 0;
+                  return (
+                    <Field key={pt.id} label={pt.name}>
+                      <Input
+                        key={`${group.id}-${pt.id}-${amount}`}
+                        className="num sm:w-28"
+                        inputMode="decimal"
+                        disabled={!canEdit}
+                        defaultValue={String(amount)}
+                        onBlur={(e) => {
+                          const v = parseFloat(e.target.value.replace(",", ".")) || 0;
+                          if (v === amount) return;
+                          mutate((st) => {
+                            setPriceGroupAmount(st, group.id, pt.id, v);
+                            logAudit("precio_grupo_editado", "price_group", group.id, {
+                              priceTypeId: pt.id,
+                              from: amount,
+                              to: v,
+                            });
+                          });
+                          toast.success(`Precio de "${group.name}" actualizado a ${usd(v)}`);
+                        }}
+                      />
+                    </Field>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () => void }) {
   const s = useAppState();
   const [f, setF] = useState<Partial<Product>>({ ...draft });
@@ -351,6 +422,10 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
     const rest = (f.prices ?? []).filter((x) => x.priceTypeId !== ptId);
     setF({ ...f, prices: [...rest, { priceTypeId: ptId, amount: v }] });
   };
+  const priceGroup = f.priceGroupId ? s.priceGroups.find((g) => g.id === f.priceGroupId) : null;
+  const priceGroupMemberCount = priceGroup
+    ? s.products.filter((p) => p.priceGroupId === priceGroup.id).length
+    : 0;
 
   return (
     <div className="grid gap-3 sm:grid-cols-2">
@@ -400,19 +475,33 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
         />
       </Field>
       <div className="sm:col-span-2">
-        <p className="mb-2 text-xs font-medium text-muted-foreground">Precios por tipo (USD)</p>
-        <div className="grid gap-2 sm:grid-cols-3">
-          {s.priceTypes.map((pt) => (
-            <Field key={pt.id} label={pt.name}>
-              <Input
-                className="num"
-                inputMode="decimal"
-                value={String(price(pt.id))}
-                onChange={(e) => setPrice(pt.id, parseFloat(e.target.value.replace(",", ".")) || 0)}
-              />
-            </Field>
-          ))}
-        </div>
+        {priceGroup ? (
+          <Aviso tone="amber" icon={IcoAlerta} title="Precio gestionado por grupo">
+            Este producto pertenece al grupo de precio «{priceGroup.name}». Su precio de venta lo
+            dicta ese grupo, no el precio propio de abajo — edítalo desde la pestaña{" "}
+            <strong>Precios</strong> de esta sección para que aplique a los{" "}
+            {priceGroupMemberCount} producto{priceGroupMemberCount === 1 ? "" : "s"} del grupo a
+            la vez.
+          </Aviso>
+        ) : (
+          <>
+            <p className="mb-2 text-xs font-medium text-muted-foreground">Precios por tipo (USD)</p>
+            <div className="grid gap-2 sm:grid-cols-3">
+              {s.priceTypes.map((pt) => (
+                <Field key={pt.id} label={pt.name}>
+                  <Input
+                    className="num"
+                    inputMode="decimal"
+                    value={String(price(pt.id))}
+                    onChange={(e) =>
+                      setPrice(pt.id, parseFloat(e.target.value.replace(",", ".")) || 0)
+                    }
+                  />
+                </Field>
+              ))}
+            </div>
+          </>
+        )}
       </div>
       <Field label="Sólo en bolívares">
         <Select

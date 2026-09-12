@@ -1,10 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { IcoBuscar, IcoMas } from "@/chasis/iconos";
+import { IcoAlerta, IcoBuscar, IcoMas } from "@/chasis/iconos";
 import { useState } from "react";
 import { toast } from "sonner";
 import { AppShell, PageHead } from "@/components/app-shell";
 import { useSession } from "@/lib/auth";
 import {
+  Aviso,
   Badge,
   Btn,
   Card,
@@ -19,10 +20,11 @@ import {
 } from "@/components/ui-kit";
 import { logAudit, mutate, useAppState } from "@/lib/store";
 import { addMovement, priceOf } from "@/lib/business";
-import { attachDefaultPriceGroup } from "@/lib/catalog";
+import { attachDefaultPriceGroup, applyPriceAlertFix } from "@/lib/catalog";
+import { priceAlerts } from "@/lib/pricing";
 import { dt, num, usd } from "@/lib/format";
 import { uid } from "@/lib/seed";
-import type { Product } from "@/lib/types";
+import type { PriceAlert, Product } from "@/lib/types";
 
 export const Route = createFileRoute("/inventario")({
   ssr: false,
@@ -67,6 +69,8 @@ function Inventario() {
         p.code.toLowerCase().includes(q.toLowerCase())),
   );
 
+  const alerts = priceAlerts(s);
+
   return (
     <>
       <PageHead
@@ -94,6 +98,18 @@ function Inventario() {
           )
         }
       />
+
+      {alerts.length > 0 && (
+        <div className="mb-4 space-y-2">
+          {alerts.map((a) => (
+            <PriceAlertAviso
+              key={(a.priceGroupId ?? a.productIds[0] ?? "alerta") + "|" + a.priceTypeId}
+              alert={a}
+              canFix={can("edit_inventory")}
+            />
+          ))}
+        </div>
+      )}
 
       <div className="mb-4 flex gap-[0.15rem] overflow-x-auto border-b border-border">
         {(["productos", "categorias", "movimientos"] as const).map((t) => (
@@ -290,6 +306,40 @@ function Inventario() {
         }}
       />
     </>
+  );
+}
+
+/**
+ * Alerta de precio bajo de tortas frías. Se queda visible mientras
+ * `priceAlerts` la siga reportando (estado derivado, no un flag "visto"): si
+ * se ignora, reaparece en cada visita hasta que alguien corrija el precio.
+ */
+function PriceAlertAviso({ alert, canFix }: { alert: PriceAlert; canFix: boolean }) {
+  return (
+    <Aviso tone="red" icon={IcoAlerta} title={`Precio bajo · ${alert.priceGroupName ?? "producto"}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span>{alert.message}</span>
+        {canFix && (
+          <Btn
+            size="sm"
+            variant="amber"
+            onClick={() => {
+              mutate((st) => {
+                applyPriceAlertFix(st, alert);
+                logAudit("precio_alerta_corregida", "price_group", alert.priceGroupId ?? "", {
+                  priceTypeId: alert.priceTypeId,
+                  from: alert.currentUsd,
+                  to: alert.suggestedUsd,
+                });
+              });
+              toast.success(`Precio actualizado a ${usd(alert.suggestedUsd)}`);
+            }}
+          >
+            Subir a {usd(alert.suggestedUsd)}
+          </Btn>
+        )}
+      </div>
+    </Aviso>
   );
 }
 

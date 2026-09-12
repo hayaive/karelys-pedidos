@@ -22,7 +22,15 @@ import {
   TORTA_QUESILLO_CODE,
   TORTA_QUESILLO_NAME,
 } from "./pricing-rules";
-import type { AppState, Category, PriceGroup, PriceRule, Product, ProductPrice } from "./types";
+import type {
+  AppState,
+  Category,
+  PriceAlert,
+  PriceGroup,
+  PriceRule,
+  Product,
+  ProductPrice,
+} from "./types";
 
 /* ── Utilidades ───────────────────────────────────────── */
 
@@ -226,4 +234,49 @@ export function ensureColdCakeFamily(s: AppState): string[] {
   if (grouped) notes.push(`${grouped} sabores agrupados bajo el precio general "${generic.name}"`);
 
   return notes;
+}
+
+/* ── Corrección de alertas de precio ─────────────────────── */
+
+/**
+ * Fija el precio de un tipo de precio concreto dentro de un `PriceGroup`.
+ * Único mutador de `PriceGroup.prices`: úsalo en vez de tocar el arreglo a
+ * mano para no duplicar la lógica de "reemplazar o agregar" en cada pantalla.
+ */
+export function setPriceGroupAmount(
+  s: AppState,
+  groupId: string,
+  priceTypeId: string,
+  amount: number,
+): boolean {
+  const g = s.priceGroups?.find((x) => x.id === groupId);
+  if (!g) return false;
+  const existing = g.prices.find((x) => x.priceTypeId === priceTypeId);
+  if (existing) existing.amount = amount;
+  else g.prices.push({ priceTypeId, amount });
+  return true;
+}
+
+/**
+ * Aplica la corrección que pide una `PriceAlert`: sube el precio del tipo de
+ * precio alertado a `alert.suggestedUsd`. Si la alerta viene de un grupo
+ * (caso normal: el genérico "Tortas Frías"), corrige sólo ese grupo. Si por
+ * alguna razón el producto alertado no pertenece a ningún grupo (categoría de
+ * tortas frías sin agrupar, caso residual), corrige el precio propio de cada
+ * producto afectado para no dejar la alerta sin acción posible.
+ */
+export function applyPriceAlertFix(s: AppState, alert: PriceAlert): boolean {
+  if (alert.priceGroupId) {
+    return setPriceGroupAmount(s, alert.priceGroupId, alert.priceTypeId, alert.suggestedUsd);
+  }
+  let touched = false;
+  for (const id of alert.productIds) {
+    const p = s.products.find((x) => x.id === id);
+    if (!p) continue;
+    const existing = p.prices.find((x) => x.priceTypeId === alert.priceTypeId);
+    if (existing) existing.amount = alert.suggestedUsd;
+    else p.prices.push({ priceTypeId: alert.priceTypeId, amount: alert.suggestedUsd });
+    touched = true;
+  }
+  return touched;
 }

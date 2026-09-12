@@ -159,10 +159,17 @@ export function companyPriceRule(s: AppState): PriceRule {
  * Regla aplicable a un producto: la de su grupo si la declara, si no la de la
  * empresa. Devuelve null para productos ajenos a la familia de tortas frías:
  * no tienen umbral y no deben generar alertas.
+ *
+ * Un producto que pertenece a un grupo de precio se rige **sólo** por la
+ * regla de ese grupo (o ninguna, si el grupo no la declara): "Oreo y Brownie"
+ * y "Torta Quesillo" viven en la categoría de tortas frías pero su grupo no
+ * declara `rule` a propósito, para quedar fuera de la banda del genérico (ver
+ * comentario de `priceBandCheck`). El resguardo de la regla de empresa sólo
+ * aplica a productos de la categoría sin grupo asignado.
  */
 export function priceRuleOf(s: AppState, p: Product): PriceRule | null {
   const g = priceGroupOf(s, p);
-  if (g?.rule) return g.rule;
+  if (g) return g.rule ?? null;
   if (isColdCake(s, p)) return companyPriceRule(s);
   return null;
 }

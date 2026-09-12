@@ -90,9 +90,11 @@ export interface PriceRule {
  * Unidad de precio compartida por varios productos: el "precio general".
  * Editando el grupo se cambia el precio de todos sus miembros a la vez.
  *
- * Un grupo puede tener un único miembro: así se modelan los sabores que deben
- * conservar precio propio y diferenciado ("Oreo y Brownie", "Torta Quesillo")
- * sin sacarlos de la familia ni duplicar la lógica de precios.
+ * Un grupo puede tener un único miembro, y hoy los tres de tortas frías lo
+ * tienen: el genérico "Tortas Frías" y los dos con precio propio y
+ * diferenciado ("Oreo y Brownie", "Torta Quesillo"). La indirección se
+ * conserva igual porque es donde viven la regla de precio y la banda, y porque
+ * un producto nuevo de la familia entra al precio general sin tocar código.
  */
 export interface PriceGroup {
   id: ID;

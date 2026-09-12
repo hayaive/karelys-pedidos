@@ -10,9 +10,13 @@ import { normalizeName, uid } from "./ids";
 import {
   COLD_CAKE_CATEGORY_ID,
   COLD_CAKE_CATEGORY_NAME,
+  COLD_CAKE_GENERIC_CODE,
   COLD_CAKE_GENERIC_GROUP_ID,
+  COLD_CAKE_GENERIC_NAME,
   COLD_CAKE_GENERIC_PRICES,
+  COLD_CAKE_GENERIC_PRODUCT_ID,
   COLD_CAKE_GENERIC_RULE,
+  COLD_CAKE_LEGACY_FLAVORS,
   COLD_CAKE_OREO_BROWNIE_GROUP_ID,
   COLD_CAKE_OREO_BROWNIE_PRICES,
   COLD_CAKE_QUESILLO_GROUP_ID,
@@ -56,15 +60,38 @@ function productByName(s: AppState, name: string) {
   return s.products.find((p) => normalizeName(p.name) === target);
 }
 
-/** Siguiente código libre de la serie del catálogo (P001, P002, …). */
+/**
+ * Siguiente código libre de la serie del catálogo (P001, P002, …).
+ *
+ * Los códigos de los sabores retirados cuentan como ocupados aunque ya no
+ * exista el producto: un comprobante viejo sigue diciendo "P001 · tres-leches"
+ * y reasignar ese código a otro producto haría que el mismo código signifique
+ * dos cosas distintas según la fecha del ticket.
+ */
 function nextFreeCode(s: AppState, preferred: string) {
-  if (!productByCode(s, preferred)) return preferred;
-  const used = new Set(s.products.map((p) => p.code));
+  const used = new Set<string>([
+    ...s.products.map((p) => p.code),
+    ...COLD_CAKE_LEGACY_FLAVORS.map((f) => f.code),
+  ]);
+  if (!used.has(preferred)) return preferred;
   for (let n = 1; n < 1000; n++) {
     const candidate = "P" + String(n).padStart(3, "0");
     if (!used.has(candidate)) return candidate;
   }
   return "P-" + uid();
+}
+
+/**
+ * Los productos que fueron los 13 sabores individuales, si todavía existen.
+ * Se identifican por código (la clave de negocio estable del catálogo) y, por
+ * si alguien editó el código a mano, también por el id que generó la semilla.
+ */
+function legacyFlavorProducts(s: AppState): Product[] {
+  const codes = new Set(COLD_CAKE_LEGACY_FLAVORS.map((f) => f.code));
+  const ids = new Set(COLD_CAKE_LEGACY_FLAVORS.map((f) => "prod-" + f.code));
+  return s.products.filter(
+    (p) => p.id !== COLD_CAKE_GENERIC_PRODUCT_ID && (codes.has(p.code) || ids.has(p.id)),
+  );
 }
 
 function ensureGroup(
@@ -117,19 +144,151 @@ export function attachDefaultPriceGroup(s: AppState, p: Product) {
   p.priceGroupId = COLD_CAKE_GENERIC_GROUP_ID;
 }
 
+/* ── Consolidación de los sabores ─────────────────────── */
+
+/**
+ * Deja **un único producto** "Tortas Frías" y elimina los 13 sabores
+ * individuales (P001–P013).
+ *
+ * Decisión del negocio (esquema v3): ya no se elige sabor al vender, así que la
+ * distinción por sabor desaparece hacia adelante (nuevas ventas) y hacia atrás
+ * (los productos se borran de verdad, no se archivan).
+ *
+ * Lo que sí se preserva es la **integridad referencial**: el stock de los 13 se
+ * suma en el producto único y todo lo que apuntaba a sus ids se reapunta, en
+ * vez de dejarse colgando. Ver el comentario de la reasignación más abajo.
+ *
+ * Es idempotente: si ya no queda ningún sabor, sólo garantiza que el producto
+ * único exista y no toca nada más.
+ */
+function collapseColdCakeFlavors(s: AppState, cat: Category): string[] {
+  const notes: string[] = [];
+  if (!Array.isArray(s.movements)) s.movements = [];
+
+  const flavors = legacyFlavorProducts(s);
+
+  /* Producto único: por id canónico y, si no, por nombre dentro de la familia
+     (una instalación pudo crearlo a mano antes de migrar). Nunca por código
+     suelto: adoptar un producto ajeno que casualmente use ese código sería
+     peor que crear el propio. */
+  const target = normalizeName(COLD_CAKE_GENERIC_NAME);
+  let generic =
+    s.products.find((p) => p.id === COLD_CAKE_GENERIC_PRODUCT_ID) ??
+    s.products.find((p) => p.categoryId === cat.id && normalizeName(p.name) === target) ??
+    null;
+
+  /* Precio de arranque: el del grupo genérico si ya existe (el negocio pudo
+     haberlo editado) y si no el de los sabores. Así consolidar no cambia
+     ningún precio de venta. */
+  const groupPrices = s.priceGroups?.find((g) => g.id === COLD_CAKE_GENERIC_GROUP_ID)?.prices;
+  const inherited = groupPrices?.length
+    ? groupPrices
+    : (flavors.find((f) => f.prices.length)?.prices ?? null);
+
+  if (!generic) {
+    const code = nextFreeCode(s, COLD_CAKE_GENERIC_CODE);
+    generic = {
+      id: COLD_CAKE_GENERIC_PRODUCT_ID,
+      code,
+      name: COLD_CAKE_GENERIC_NAME,
+      categoryId: cat.id,
+      stock: 0,
+      minStock: 5,
+      active: true,
+      prices: inherited
+        ? inherited.map((x) => ({ ...x }))
+        : spreadPrices(s, COLD_CAKE_GENERIC_PRICES),
+      createdAt: new Date().toISOString(),
+    };
+    s.products.push(generic);
+    notes.push(`producto único "${COLD_CAKE_GENERIC_NAME}" creado (${code})`);
+  } else {
+    if (generic.categoryId !== cat.id) generic.categoryId = cat.id;
+    if (generic.name !== COLD_CAKE_GENERIC_NAME) generic.name = COLD_CAKE_GENERIC_NAME;
+    if (!generic.prices.length && inherited) generic.prices = inherited.map((x) => ({ ...x }));
+  }
+
+  if (!flavors.length) return notes; // nada que consolidar
+
+  /* Stock: la familia pasa a ser un solo SKU fungible, así que las unidades
+     físicas de los 13 sabores son las del producto único. Si no se sumaran, el
+     inventario quedaría subvalorado y habría que recontar a mano. */
+  const stockSum = flavors.reduce((a, f) => a + (Number.isFinite(f.stock) ? f.stock : 0), 0);
+  generic.stock += stockSum;
+
+  /* Reasignación de referencias. Los ids de los sabores no se dejan colgando:
+   *   · `movements`  el kardex conserva su dueño (si no, el historial mostraría
+   *     filas sin producto) y cuadra con el stock consolidado.
+   *   · `items` de ventas y pedidos: `applyMovement` ignora en silencio un
+   *     `productId` que no existe, así que una venta vieja anulada nunca
+   *     devolvería stock y un pedido pendiente creado antes de migrar nunca lo
+   *     descontaría al procesarse (ver createSale/cancelSale en lib/business).
+   *
+   * `code` y `name` de las líneas y el `reason` de los movimientos NO se tocan:
+   * son la foto del momento y el comprobante debe seguir diciendo qué sabor se
+   * despachó. El sabor original se anota además en el movimiento, para que la
+   * reasignación quede visible en el historial y no sea un cambio silencioso. */
+  const byId = new Map(flavors.map((f) => [f.id, f]));
+
+  let movedMovements = 0;
+  for (const m of s.movements) {
+    const f = byId.get(m.productId);
+    if (!f) continue;
+    m.productId = generic.id;
+    m.note = m.note ? `${m.note} · sabor: ${f.name}` : `sabor: ${f.name}`;
+    movedMovements++;
+  }
+
+  let movedLines = 0;
+  for (const doc of [...s.sales, ...s.orders]) {
+    if (!Array.isArray(doc.items)) continue;
+    for (const it of doc.items) {
+      if (!byId.has(it.productId)) continue;
+      it.productId = generic.id;
+      movedLines++;
+    }
+  }
+
+  /* El stock del producto único salta por la consolidación, no por una venta:
+     queda asentado como ajuste para que el historial explique de dónde viene. */
+  s.movements.unshift({
+    id: uid(),
+    productId: generic.id,
+    qty: generic.stock,
+    type: "ajuste",
+    reason: "Consolidación de sabores de Tortas Frías",
+    note: `${flavors.length} sabores retirados · stock acumulado ${stockSum}`,
+    userId: "system",
+    createdAt: new Date().toISOString(),
+  });
+
+  /* Borrado real de las filas, como pidió el negocio (no archivado). */
+  s.products = s.products.filter((p) => !byId.has(p.id));
+
+  notes.push(
+    `${flavors.length} sabores eliminados y consolidados en "${generic.name}" (${generic.code})`,
+  );
+  notes.push(`stock acumulado ${stockSum} trasladado al producto único`);
+  if (movedMovements) notes.push(`${movedMovements} movimientos de inventario reasignados`);
+  if (movedLines) notes.push(`${movedLines} líneas de venta/pedido reapuntadas`);
+
+  return notes;
+}
+
 /* ── Familia de tortas frías ──────────────────────────── */
 
 /**
- * Deja la familia de tortas frías con **3 unidades de precio**:
+ * Deja la familia de tortas frías con **3 unidades de precio**, una por
+ * producto:
  *
- *   1. "Tortas Frías"    → precio general de todos los sabores
+ *   1. "Tortas Frías"    → producto único que reemplaza a los 13 sabores
  *   2. "Oreo y Brownie"  → precio propio y diferenciado
  *   3. "Torta Quesillo"  → precio propio y diferenciado
  *
- * Los sabores siguen existiendo como productos individuales (el ticket, el
- * inventario y la producción necesitan saber qué sabor se vendió, y los pedidos
- * y ventas ya registrados apuntan a esos ids). Lo que se agrupa es el
- * **precio**, no el producto: así ninguna referencia histórica se rompe.
+ * Los tres conservan la indirección de `PriceGroup` aunque tengan un solo
+ * miembro: la UI de precios lista una fila por grupo, la regla con banda del
+ * genérico vive en el grupo (ver `priceRuleOf` en lib/pricing) y cualquier
+ * producto nuevo de la categoría hereda el precio general sin tocar código.
  *
  * Devuelve notas de lo que cambió, para registrarlas en la auditoría.
  */
@@ -182,7 +341,11 @@ export function ensureColdCakeFamily(s: AppState): string[] {
     notes.push(`"${OREO_BROWNIE_NAME}" movido a ${cat.name}`);
   }
 
-  /* 4 · Las tres unidades de precio.
+  /* 4 · Producto único de sabores: se crea y se retiran los 13 individuales.
+     Va antes de los grupos porque el precio del grupo genérico se toma de él. */
+  notes.push(...collapseColdCakeFlavors(s, cat));
+
+  /* 5 · Las tres unidades de precio.
      El precio del grupo se toma del producto que ya lo tenía, para que agrupar
      no cambie ningún precio de venta en instalaciones existentes. */
   const genericSample = s.products.find(
@@ -217,7 +380,7 @@ export function ensureColdCakeFamily(s: AppState): string[] {
       : spreadPrices(s, COLD_CAKE_QUESILLO_PRICES),
   });
 
-  /* 5 · Asignación. Los diferenciados primero, para que el barrido del
+  /* 6 · Asignación. Los diferenciados primero, para que el barrido del
      genérico no se los lleve. */
   oreo.priceGroupId = oreoGroup.id;
   if (quesillo) quesillo.priceGroupId = quesilloGroup.id;
@@ -231,7 +394,10 @@ export function ensureColdCakeFamily(s: AppState): string[] {
     p.priceGroupId = generic.id;
     grouped++;
   }
-  if (grouped) notes.push(`${grouped} sabores agrupados bajo el precio general "${generic.name}"`);
+  if (grouped)
+    notes.push(
+      `${grouped} producto${grouped === 1 ? "" : "s"} bajo el precio general "${generic.name}"`,
+    );
 
   return notes;
 }

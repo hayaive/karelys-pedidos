@@ -20,9 +20,11 @@ export const COLD_CAKE_CATEGORY_ID = "cat-tortas-frias";
 export const COLD_CAKE_CATEGORY_NAME = "Tortas Frías";
 
 /**
- * Las 3 unidades de precio de la familia. Todos los sabores comparten
- * `pg-tortas-frias`; los dos productos diferenciados tienen grupo propio de un
- * solo miembro para que la UI pueda listar exactamente estas tres filas.
+ * Las 3 unidades de precio de la familia. Cada una tiene exactamente un
+ * producto: el genérico "Tortas Frías" y los dos diferenciados. Se mantiene la
+ * indirección de grupo en los tres por simetría —la UI de "Precios agrupados"
+ * lista una fila por grupo— y porque la regla de precio con banda vive en el
+ * grupo, no en el producto (ver `priceRuleOf` en lib/pricing).
  */
 export const COLD_CAKE_GENERIC_GROUP_ID = "pg-tortas-frias";
 export const COLD_CAKE_OREO_BROWNIE_GROUP_ID = "pg-oreo-brownie";
@@ -35,9 +37,51 @@ export const TORTA_QUESILLO_CODE = "P015";
 export const OREO_BROWNIE_NAME = "Oreo y Brownie";
 export const TORTA_QUESILLO_NAME = "Torta Quesillo";
 
+/* ── Producto único de tortas frías ───────────────────── */
+
+/**
+ * Producto único que representa toda la familia de sabores. El negocio dejó de
+ * distinguir el sabor al vender (decisión del dueño, esquema v3): el cajero ve
+ * un solo ítem "Tortas Frías".
+ *
+ * El código es nuevo (sigue la serie del catálogo, que llegaba a P059) y no
+ * reutiliza ninguno de los retirados: un ticket viejo que dice "P001 ·
+ * tres-leches" nunca debe resolver a este producto.
+ */
+export const COLD_CAKE_GENERIC_CODE = "P060";
+export const COLD_CAKE_GENERIC_PRODUCT_ID = "prod-" + COLD_CAKE_GENERIC_CODE;
+export const COLD_CAKE_GENERIC_NAME = COLD_CAKE_CATEGORY_NAME;
+
+/**
+ * Los 13 sabores individuales que existieron hasta el esquema v2. Se eliminan
+ * en v3 y se consolidan en `COLD_CAKE_GENERIC_CODE` (ver
+ * `ensureColdCakeFamily` en lib/catalog).
+ *
+ * La lista se conserva aquí —no en la semilla— porque es la identidad de lo
+ * que hay que retirar en instalaciones existentes: la semilla ya no los trae.
+ * Sus códigos quedan **retirados**: `nextFreeCode` no los reparte de nuevo,
+ * para que no aparezcan dos productos distintos con el mismo código en
+ * comprobantes de fechas distintas.
+ */
+export const COLD_CAKE_LEGACY_FLAVORS: { code: string; name: string }[] = [
+  { code: "P001", name: "tres-leches" },
+  { code: "P002", name: "milhojas" },
+  { code: "P003", name: "fresa" },
+  { code: "P004", name: "arequipe" },
+  { code: "P005", name: "torta suiza" },
+  { code: "P006", name: "chocolate" },
+  { code: "P007", name: "choco-leche" },
+  { code: "P008", name: "choco-fresa" },
+  { code: "P009", name: "mani" },
+  { code: "P010", name: "choco-mani" },
+  { code: "P011", name: "choco-arequipe" },
+  { code: "P012", name: "prestigio" },
+  { code: "P013", name: "tornado" },
+];
+
 /**
  * Precio del grupo genérico. Coincide con el precio que ya tenían los 13
- * sabores, así la agrupación no cambia ningún precio de venta.
+ * sabores, así consolidarlos no cambia ningún precio de venta.
  */
 export const COLD_CAKE_GENERIC_PRICES = { mayor: 1.1, detal: 1.11 };
 

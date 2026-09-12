@@ -135,8 +135,8 @@ export function priceGroupsOfCategory(s: AppState, categoryId: ID) {
 
 /**
  * Las unidades de precio de la familia de tortas frías. Después de la
- * migración son exactamente 3: el genérico "Tortas Frías" y los dos
- * diferenciados.
+ * migración son exactamente 3, con un producto cada una: el genérico
+ * "Tortas Frías" (que reemplazó a los 13 sabores) y los dos diferenciados.
  */
 export function coldCakePriceGroups(s: AppState) {
   return priceGroupsOfCategory(s, s.company.coldCakeCategory);
@@ -210,8 +210,8 @@ export function priceAlertOf(
 
 /**
  * Todas las alertas de precio bajo del catálogo, deduplicadas por unidad de
- * precio: un grupo con 11 sabores produce una sola alerta por tipo de precio,
- * no once. Para el badge/panel de alertas.
+ * precio: un grupo produce una sola alerta por tipo de precio, tenga uno o
+ * varios miembros. Para el badge/panel de alertas.
  */
 export function priceAlerts(s: AppState): PriceAlert[] {
   const out: PriceAlert[] = [];

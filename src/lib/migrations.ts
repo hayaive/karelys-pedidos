@@ -20,7 +20,7 @@ import {
 import type { AppState } from "./types";
 
 /** Versión de esquema que entiende este código. */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 interface Migration {
   to: number;
@@ -34,6 +34,10 @@ interface Migration {
  *  · `Order.deposits`: abonos / pagos adelantados
  *  · regla de precio de tortas frías: umbral 1,10 y objetivo 1,30 USD
  *  · antigüedad máxima de la tasa BCV
+ *
+ * El catálogo lo deja `ensureColdCakeFamily`, que es la forma canónica de hoy
+ * (por eso una instalación en v1 llega directo al estado de v3 en este paso y
+ * el siguiente no encuentra nada que hacer).
  */
 function toV2(s: AppState): string[] {
   const notes: string[] = [];
@@ -69,7 +73,27 @@ function toV2(s: AppState): string[] {
   return notes;
 }
 
-const MIGRATIONS: Migration[] = [{ to: 2, name: "price-groups-and-order-deposits", up: toV2 }];
+/**
+ * v2 → v3
+ *  · los 13 sabores individuales de tortas frías (P001–P013) se **eliminan** y
+ *    se consolidan en un único producto "Tortas Frías": el negocio dejó de
+ *    elegir sabor al vender.
+ *  · el stock de los 13 se suma en el producto único y todo lo que apuntaba a
+ *    sus ids (kardex, líneas de ventas y pedidos) se reapunta a él, para no
+ *    dejar referencias huérfanas que romperían la devolución de stock de una
+ *    venta anulada o el descuento de un pedido pendiente anterior.
+ *
+ * Toda la lógica vive en `ensureColdCakeFamily` (lib/catalog), la misma función
+ * que usa la semilla, para que instalación nueva y migrada queden idénticas.
+ */
+function toV3(s: AppState): string[] {
+  return ensureColdCakeFamily(s);
+}
+
+const MIGRATIONS: Migration[] = [
+  { to: 2, name: "price-groups-and-order-deposits", up: toV2 },
+  { to: 3, name: "cold-cake-single-product", up: toV3 },
+];
 
 export interface MigrationResult {
   from: number;

@@ -18,7 +18,15 @@ import {
   Textarea,
 } from "@/components/ui-kit";
 import { useAppState } from "@/lib/store";
-import { addOrderDeposit, deleteOrder, orderBalance, setOrderStatus, updateOrder } from "@/lib/business";
+import {
+  addOrderDeposit,
+  deleteOrder,
+  lineBs,
+  orderBalance,
+  setOrderStatus,
+  updateOrder,
+} from "@/lib/business";
+import { useMoney } from "@/hooks/use-money";
 import { dt, parseAmount, usd } from "@/lib/format";
 import type { Order, OrderStatus } from "@/lib/types";
 import { useShortcuts } from "@/lib/shortcuts";
@@ -50,6 +58,7 @@ const STATUSES: { key: OrderStatus; label: string }[] = [
 
 function Pedidos() {
   const s = useAppState();
+  const money = useMoney();
   const { can } = useSession();
   const [creating, setCreating] = useState(false);
   const [processing, setProcessing] = useState<Order | null>(null);
@@ -175,7 +184,14 @@ function Pedidos() {
                 {o.note && (
                   <p className="mt-2 rounded bg-sol-vela px-2 py-1 text-xs text-sol-70">{o.note}</p>
                 )}
-                <p className="num mt-3 text-lg font-semibold">{usd(o.totalUsd)}</p>
+                <p className="mt-3">
+                  <span className="num block text-lg font-semibold">
+                    {money.fmtBs(o.totalUsd)}
+                  </span>
+                  <span className="num block text-xs text-muted-foreground">
+                    {usd(o.totalUsd)}
+                  </span>
+                </p>
                 <div className="mt-1.5 flex items-center justify-between gap-2">
                   <Badge
                     liso
@@ -190,12 +206,12 @@ function Pedidos() {
                     {balance.status === "pagado"
                       ? "Pagado"
                       : balance.status === "abonado"
-                        ? `Abonado ${usd(balance.depositUsd)}`
+                        ? `Abonado ${money.fmtBs(balance.depositUsd)}`
                         : "Sin abono"}
                   </Badge>
                   {balance.status === "abonado" && (
                     <span className="num text-xs font-semibold text-muted-foreground">
-                      Saldo {usd(balance.balanceUsd)}
+                      Saldo {money.fmtBs(balance.balanceUsd)}
                     </span>
                   )}
                 </div>
@@ -266,6 +282,7 @@ function Pedidos() {
 
 function AddDeposit({ orderId, onClose }: { orderId: string; onClose: () => void }) {
   const s = useAppState();
+  const money = useMoney();
   const order = s.orders.find((o) => o.id === orderId);
   const methods = s.paymentMethods.filter((m) => m.active);
   const [methodId, setMethodId] = useState(methods[0]?.id ?? "");
@@ -281,15 +298,30 @@ function AddDeposit({ orderId, onClose }: { orderId: string; onClose: () => void
       <div className="rounded-md border border-border bg-sup-2 p-3 text-sm">
         <div className="flex items-center justify-between">
           <span className="text-muted-foreground">Total del pedido</span>
-          <span className="num font-medium">{usd(balance.totalUsd)}</span>
+          <span className="text-right">
+            <span className="num block font-medium">{money.fmtBs(balance.totalUsd)}</span>
+            <span className="num block text-[11px] text-muted-foreground">
+              {usd(balance.totalUsd)}
+            </span>
+          </span>
         </div>
         <div className="flex items-center justify-between">
           <span className="text-muted-foreground">Ya abonado</span>
-          <span className="num font-medium">{usd(balance.depositUsd)}</span>
+          <span className="text-right">
+            <span className="num block font-medium">{money.fmtBs(balance.depositUsd)}</span>
+            <span className="num block text-[11px] text-muted-foreground">
+              {usd(balance.depositUsd)}
+            </span>
+          </span>
         </div>
         <div className="flex items-center justify-between">
           <span className="font-medium">Saldo pendiente</span>
-          <span className="num font-semibold">{usd(balance.balanceUsd)}</span>
+          <span className="text-right">
+            <span className="num block font-semibold">{money.fmtBs(balance.balanceUsd)}</span>
+            <span className="num block text-[11px] text-muted-foreground">
+              {usd(balance.balanceUsd)}
+            </span>
+          </span>
         </div>
       </div>
       <Field label="Forma de pago">
@@ -340,6 +372,7 @@ function AddDeposit({ orderId, onClose }: { orderId: string; onClose: () => void
 }
 
 function EditOrder({ order, onClose }: { order: Order; onClose: () => void }) {
+  const money = useMoney();
   const [items, setItems] = useState(order.items);
   const [note, setNote] = useState(order.note ?? "");
   const [status, setStatus] = useState<OrderStatus>(order.status);
@@ -372,7 +405,14 @@ function EditOrder({ order, onClose }: { order: Order; onClose: () => void }) {
               }}
               className="num h-8 w-16 rounded border border-border bg-card px-2 text-sm"
             />
-            <span className="num w-20 text-right text-sm">{usd(i.subtotalUsd)}</span>
+            <span className="w-20 text-right">
+              <span className="num block text-sm">{money.fmtBsAmount(lineBs(i, money))}</span>
+              {!i.bsOnly && (
+                <span className="num block text-[10px] text-muted-foreground">
+                  {usd(i.subtotalUsd)}
+                </span>
+              )}
+            </span>
             <button
               onClick={() => setItems(items.filter((_, j) => j !== k))}
               className="text-muted-foreground hover:text-rojo"

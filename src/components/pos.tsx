@@ -13,13 +13,16 @@ import { useAppState } from "@/lib/store";
 import {
   createOrder,
   createSale,
-  currentRate,
+  itemsTotals,
+  lineBs,
   orderBalance,
   priceBandCheck,
   priceOf,
-  totalsOf,
+  unitBs,
 } from "@/lib/business";
 import { upsertCustomer } from "@/lib/business";
+import { useMoney } from "@/hooks/use-money";
+import type { Money } from "@/lib/money";
 import { bs, num, parseAmount, usd, validCedula } from "@/lib/format";
 import type { Customer, LineItem, Payment, Product } from "@/lib/types";
 import { Badge, Btn, Card, Field, Input, Modal, Select, Textarea, inputCls } from "./ui-kit";
@@ -44,7 +47,8 @@ export function POS({
   mode?: "sale" | "order";
 }) {
   const s = useAppState();
-  const rate = currentRate(s, "BCV_USD")?.value ?? 0;
+  const money = useMoney();
+  const rate = money.rate;
   const sc = shortcutsOf(s.company);
   const [items, setItems] = useState<LineItem[]>(initialItems ?? []);
   const [q, setQ] = useState("");
@@ -76,9 +80,7 @@ export function POS({
     Number.isFinite(depositRaw) && depositRaw > 0
       ? depositMethod?.currency === "USD"
         ? depositRaw
-        : rate
-          ? depositRaw / rate
-          : 0
+        : money.toUsd(depositRaw)
       : 0;
 
   const products = useMemo(
@@ -96,12 +98,12 @@ export function POS({
 
   const showResults = q.trim() !== "" || cat !== "all";
 
-  const { totalUsd, totalBs } = totalsOf(items, rate);
+  const { totalUsd, totalBs } = itemsTotals(items, money);
   const liveOrder = orderId ? s.orders.find((o) => o.id === orderId) : undefined;
   const balance = liveOrder ? orderBalance(liveOrder) : null;
   const hasDeposits = !!balance && balance.depositUsd > 0.001;
   const amountDueUsd = balance ? balance.balanceUsd : totalUsd;
-  const amountDueBs = rate ? amountDueUsd * rate : 0;
+  const amountDueBs = money.toBs(amountDueUsd);
 
   useShortcuts({
     search_product: () => {
@@ -214,10 +216,9 @@ export function POS({
             <p className="truncate text-sm font-medium">{i.name}</p>
             {i.customization && <p className="text-xs text-sol-70">{i.customization}</p>}
             <p className="num text-xs text-muted-foreground">
-              {i.bsOnly
-                ? bs(i.unitPriceBs ?? 0)
-                : usd(i.unitPriceUsd + (i.customizationPrice ?? 0))}{" "}
-              × {i.qty} und
+              {money.fmtBsAmount(unitBs(i, money))}
+              {!i.bsOnly && <span> ({usd(i.unitPriceUsd + (i.customizationPrice ?? 0))})</span>}
+              {" "}× {i.qty} und
             </p>
           </div>
           <div className="flex items-center gap-1">
@@ -236,9 +237,12 @@ export function POS({
               <IcoMas />
             </Btn>
           </div>
-          <span className="num w-20 text-right text-sm font-semibold">
-            {i.bsOnly ? bs((i.unitPriceBs ?? 0) * i.qty) : usd(i.subtotalUsd)}
-          </span>
+          <div className="w-24 text-right">
+            <p className="num text-sm font-semibold">{money.fmtBsAmount(lineBs(i, money))}</p>
+            {!i.bsOnly && (
+              <p className="num text-[11px] text-muted-foreground">{usd(i.subtotalUsd)}</p>
+            )}
+          </div>
           <button onClick={() => setQty(k, 0)} className="text-muted-foreground hover:text-rojo">
             <IcoPapelera />
           </button>
@@ -409,8 +413,15 @@ export function POS({
                     </span>
                     <span className="min-w-0 flex-1 truncate text-sm font-medium">{p.name}</span>
                     {low && <Badge tone="red">{p.stock}</Badge>}
-                    <span className="num w-24 shrink-0 text-right text-sm font-semibold text-sol-70">
-                      {p.bsOnly ? num(p.bsPrice ?? 0) + " Bs" : usd(price ?? 0)}
+                    <span className="w-24 shrink-0 text-right">
+                      <span className="num block text-sm font-semibold text-sol-70">
+                        {p.bsOnly ? bs(p.bsPrice ?? 0) : money.fmtBsAmount(money.toBsRounded(price ?? 0))}
+                      </span>
+                      {!p.bsOnly && (
+                        <span className="num block text-[11px] text-muted-foreground">
+                          {usd(price ?? 0)}
+                        </span>
+                      )}
                     </span>
                     <IcoMas />
                   </button>
@@ -454,8 +465,8 @@ export function POS({
             {items.map((i, k) => (
               <div key={k} className="flex items-center justify-between gap-2 text-sm">
                 <span className="min-w-0 truncate">{i.name}</span>
-                <span className="num shrink-0">
-                  {i.bsOnly ? bs((i.unitPriceBs ?? 0) * i.qty) : usd(i.subtotalUsd)}
+                <span className="num shrink-0 text-right">
+                  {money.fmtBsAmount(lineBs(i, money))}
                 </span>
               </div>
             ))}
@@ -463,26 +474,31 @@ export function POS({
         </div>
         <div className="space-y-1.5 border-t border-border py-3">
           <div className="flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">Total USD</span>
-            <span className="num text-lg font-semibold">{usd(totalUsd)}</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">Total Bs</span>
-            <span className="num text-lg font-semibold">{bs(totalBs)}</span>
+            <span className="text-sm text-muted-foreground">Total</span>
+            <span className="text-right">
+              <span className="num block text-lg font-semibold">{bs(totalBs)}</span>
+              <span className="num block text-xs text-muted-foreground">{usd(totalUsd)}</span>
+            </span>
           </div>
           {hasDeposits && (
             <>
               <div className="flex items-center justify-between text-sol-70">
                 <span className="text-sm">Abonado</span>
-                <span className="num text-sm font-semibold">- {usd(balance!.depositUsd)}</span>
+                <span className="text-right">
+                  <span className="num block text-sm font-semibold">
+                    - {money.fmtBs(balance!.depositUsd)}
+                  </span>
+                  <span className="num block text-[11px] opacity-80">
+                    - {usd(balance!.depositUsd)}
+                  </span>
+                </span>
               </div>
               <div className="flex items-center justify-between border-t border-border pt-1.5">
                 <span className="text-sm font-medium">Saldo a cobrar</span>
-                <span className="num text-lg font-semibold">{usd(amountDueUsd)}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Saldo en Bs</span>
-                <span className="num text-sm">{bs(amountDueBs)}</span>
+                <span className="text-right">
+                  <span className="num block text-lg font-semibold">{bs(amountDueBs)}</span>
+                  <span className="num block text-xs text-muted-foreground">{usd(amountDueUsd)}</span>
+                </span>
               </div>
             </>
           )}
@@ -592,6 +608,7 @@ export function POS({
       >
         <CustomizeForm
           product={customizeFor}
+          money={money}
           onSkip={() => customizeFor && add(customizeFor, "")}
           onConfirm={(txt) => customizeFor && add(customizeFor, txt)}
         />
@@ -602,7 +619,7 @@ export function POS({
         onClose={() => setPayOpen(false)}
         totalUsd={amountDueUsd}
         totalBs={amountDueBs}
-        rate={rate}
+        money={money}
         onConfirm={(payments) => {
           const res = createSale({
             items,
@@ -634,10 +651,12 @@ export function POS({
 
 function CustomizeForm({
   product,
+  money,
   onConfirm,
   onSkip,
 }: {
   product: Product | null;
+  money: Money;
   onConfirm: (t: string) => void;
   onSkip: () => void;
 }) {
@@ -646,7 +665,8 @@ function CustomizeForm({
   return (
     <div className="space-y-3">
       <p className="text-sm text-muted-foreground">
-        La personalización agrega {usd(product.customizationPrice ?? 0)} al precio según el modelo.
+        La personalización agrega {money.fmtBs(product.customizationPrice ?? 0)} (
+        {usd(product.customizationPrice ?? 0)}) al precio según el modelo.
       </p>
       <Field label="Modelo / mensaje">
         <Input
@@ -772,17 +792,18 @@ export function PaymentModal({
   onClose,
   totalUsd,
   totalBs,
-  rate,
+  money,
   onConfirm,
 }: {
   open: boolean;
   onClose: () => void;
   totalUsd: number;
   totalBs: number;
-  rate: number;
+  money: Money;
   onConfirm: (p: Payment[]) => void;
 }) {
   const s = useAppState();
+  const rate = money.rate;
   const methods = s.paymentMethods.filter((m) => m.active);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [methodId, setMethodId] = useState(methods[0]?.id ?? "");
@@ -808,7 +829,7 @@ export function PaymentModal({
     if (!Number.isFinite(val) || val <= 0) return toast.error("Monto inválido");
     if (method.requiresReference && !reference.trim())
       return toast.error("Esta forma de pago requiere referencia");
-    const usdEq = method.currency === "USD" ? val : rate ? val / rate : 0;
+    const usdEq = method.currency === "USD" ? val : money.toUsd(val);
     setPayments([
       ...payments,
       {
@@ -829,12 +850,11 @@ export function PaymentModal({
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-3">
           <div className="rounded-md border border-border bg-sup-2 p-3">
-            <Row l="Total USD" r={usd(totalUsd)} strong />
-            <Row l="Total Bs" r={bs(totalBs)} />
+            <Row l="Total" r={bs(totalBs)} sub={usd(totalUsd)} strong />
             <div className="my-2 border-t border-border" />
-            <Row l="Pagado" r={usd(paid)} />
-            <Row l="Restante" r={usd(remaining)} strong />
-            <Row l="Vuelto" r={usd(change)} />
+            <Row l="Pagado" r={money.fmtBs(paid)} sub={usd(paid)} />
+            <Row l="Restante" r={money.fmtBs(remaining)} sub={usd(remaining)} strong />
+            <Row l="Vuelto" r={money.fmtBs(change)} sub={usd(change)} />
             <p className="num mt-2 text-[11px] text-texto-3">Tasa BCV USD {num(rate)}</p>
           </div>
           <Field label="Forma de pago">
@@ -850,7 +870,7 @@ export function PaymentModal({
             label={`Monto en ${method?.currency === "USD" ? "USD" : "Bs"}`}
             hint={
               method?.currency === "BS"
-                ? `Equivale a ${usd(parseAmount(amount) / (rate || 1) || 0)}`
+                ? `Equivale a ${usd(money.toUsd(parseAmount(amount)) || 0)}`
                 : undefined
             }
           >
@@ -860,7 +880,9 @@ export function PaymentModal({
                 inputMode="decimal"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                placeholder={method?.currency === "USD" ? num(remaining) : num(remaining * rate)}
+                placeholder={
+                  method?.currency === "USD" ? num(remaining) : num(money.toBs(remaining))
+                }
               />
               {remaining > 0.001 && (
                 <Btn
@@ -872,7 +894,7 @@ export function PaymentModal({
                     setAmount(
                       method?.currency === "USD"
                         ? num(remaining)
-                        : num(Math.round(remaining * rate * 100) / 100),
+                        : num(Math.round(money.toBs(remaining) * 100) / 100),
                     )
                   }
                 >
@@ -909,9 +931,11 @@ export function PaymentModal({
                 </div>
                 <div className="text-right">
                   <p className="num text-sm">
-                    {p.currency === "USD" ? usd(p.amount) : bs(p.amount)}
+                    {p.currency === "USD" ? money.fmtBs(p.amount) : bs(p.amount)}
                   </p>
-                  <p className="num text-[11px] text-muted-foreground">≈ {usd(p.usdEquivalent)}</p>
+                  <p className="num text-[11px] text-muted-foreground">
+                    {p.currency === "USD" ? usd(p.amount) : usd(p.usdEquivalent)}
+                  </p>
                 </div>
                 <button
                   onClick={() => setPayments(payments.filter((_, i) => i !== k))}
@@ -937,7 +961,7 @@ export function PaymentModal({
   );
 }
 
-function Row({ l, r, strong }: { l: string; r: string; strong?: boolean }) {
+function Row({ l, r, sub, strong }: { l: string; r: string; sub?: string; strong?: boolean }) {
   return (
     <div className="flex items-center justify-between">
       <span
@@ -945,7 +969,10 @@ function Row({ l, r, strong }: { l: string; r: string; strong?: boolean }) {
       >
         {l}
       </span>
-      <span className={cn("num text-sm", strong && "font-semibold")}>{r}</span>
+      <span className="text-right">
+        <span className={cn("num block text-sm", strong && "font-semibold")}>{r}</span>
+        {sub && <span className="num block text-[11px] text-muted-foreground">{sub}</span>}
+      </span>
     </div>
   );
 }

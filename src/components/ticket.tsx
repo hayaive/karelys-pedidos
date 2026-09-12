@@ -1,10 +1,23 @@
 import { useAppState } from "@/lib/store";
 import { IcoImprimir } from "@/chasis/iconos";
 import { dt, num } from "@/lib/format";
+import { lineBs, unitBs } from "@/lib/pricing";
+import { useSaleMoney } from "@/hooks/use-money";
 import type { Sale } from "@/lib/types";
 import { Btn } from "./ui-kit";
+
+/**
+ * Ticket de una venta ya cerrada. Se imprime siempre con la tasa congelada en
+ * `sale.rateSnapshot` (`useSaleMoney`), nunca con la tasa BCV de hoy: si la
+ * venta se cobró ayer, el ticket debe seguir mostrando la tasa de ayer aunque
+ * la de hoy haya cambiado.
+ *
+ * El bolívar es el monto principal (es lo que el cliente paga); el USD queda
+ * como referencia secundaria, más pequeño, entre paréntesis.
+ */
 export function TicketPreview({ sale }: { sale: Sale }) {
   const s = useAppState();
+  const m = useSaleMoney(sale);
   return (
     <div className="space-y-3">
       <div
@@ -27,35 +40,46 @@ export function TicketPreview({ sale }: { sale: Sale }) {
         <p>CLIENTE: {sale.customerName}</p>
         <p>CAJERO: {sale.userName}</p>
         <Sep />
-        {sale.items.map((i, k) => (
-          <div key={k} className="mb-1">
-            <p className="uppercase">{i.name}</p>
-            {i.customization && <p>* {i.customization}</p>}
-            <div className="flex justify-between">
-              <span>
-                {i.qty} x {i.bsOnly ? num(i.unitPriceBs ?? 0) + " Bs" : "$" + num(i.unitPriceUsd)}
-              </span>
-              <span>
-                {i.bsOnly ? num((i.unitPriceBs ?? 0) * i.qty) + " Bs" : "$" + num(i.subtotalUsd)}
-              </span>
+        {sale.items.map((i, k) => {
+          const unit = i.bsOnly ? (i.unitPriceBs ?? 0) : unitBs(i, m);
+          const subtotal = i.bsOnly ? (i.unitPriceBs ?? 0) * i.qty : lineBs(i, m);
+          return (
+            <div key={k} className="mb-1">
+              <p className="uppercase">{i.name}</p>
+              {i.customization && <p>* {i.customization}</p>}
+              <div className="flex justify-between">
+                <span>
+                  {i.qty} x {m.fmtBsAmount(unit)}
+                </span>
+                <span>{m.fmtBsAmount(subtotal)}</span>
+              </div>
+              {!i.bsOnly && (
+                <p className="text-right text-[8px] text-black/50">≈ {m.fmtUsd(i.subtotalUsd)}</p>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
         <Sep />
-        <Row l="SUBTOTAL USD" r={"$" + num(sale.totalUsd)} />
-        <Row l="TOTAL USD" r={"$" + num(sale.totalUsd)} bold />
-        <Row l="TOTAL BS" r={num(sale.totalBs)} bold />
+        <Row l="TOTAL" r={m.fmtBsAmount(sale.totalBs)} bold />
+        <p className="text-right text-[8px] text-black/50">≈ {m.fmtUsd(sale.totalUsd)}</p>
         <Sep />
         <p>PAGOS:</p>
-        {sale.payments.map((p, k) => (
-          <Row
-            key={k}
-            l={p.methodName + (p.reference ? " #" + p.reference : "")}
-            r={p.currency === "USD" ? "$" + num(p.amount) : num(p.amount) + " Bs"}
-          />
-        ))}
+        {sale.payments.map((p, k) => {
+          const isUsd = p.currency === "USD";
+          const primary = isUsd ? m.fmtBs(p.amount) : m.fmtBsAmount(p.amount);
+          const secondary = isUsd ? "$" + num(p.amount) : m.fmtUsd(m.toUsd(p.amount));
+          return (
+            <div key={k} className="mb-0.5">
+              <Row l={p.methodName + (p.reference ? " #" + p.reference : "")} r={primary} />
+              <p className="text-right text-[8px] text-black/50">≈ {secondary}</p>
+            </div>
+          );
+        })}
         {(sale.changeUsd ?? 0) > 0.001 && (
-          <Row l="VUELTO" r={"$" + num(sale.changeUsd ?? 0)} bold />
+          <>
+            <Row l="VUELTO" r={m.fmtBs(sale.changeUsd ?? 0)} bold />
+            <p className="text-right text-[8px] text-black/50">≈ {m.fmtUsd(sale.changeUsd ?? 0)}</p>
+          </>
         )}
         <Sep />
         <p>TASA BCV USD: {num(sale.rateSnapshot.usd)}</p>

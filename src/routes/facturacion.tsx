@@ -5,7 +5,8 @@ import { AppShell, PageHead } from "@/components/app-shell";
 import { useSession } from "@/lib/auth";
 import { Badge, Btn, Card, ConfirmDialog, Empty, Input, Modal, Select } from "@/components/ui-kit";
 import { useAppState } from "@/lib/store";
-import { cancelSale } from "@/lib/business";
+import { cancelSale, lineBs } from "@/lib/business";
+import { useSaleMoney } from "@/hooks/use-money";
 import { bs, dayKey, dt, num, usd } from "@/lib/format";
 import { TicketPreview } from "@/components/ticket";
 import type { Sale } from "@/lib/types";
@@ -103,8 +104,8 @@ function Facturacion() {
                   </p>
                 </div>
                 <div className="text-right">
-                  <p className="num text-sm font-semibold">{usd(x.totalUsd)}</p>
-                  <p className="num text-xs text-muted-foreground">{bs(x.totalBs)}</p>
+                  <p className="num text-sm font-semibold">{bs(x.totalBs)}</p>
+                  <p className="num text-xs text-muted-foreground">{usd(x.totalUsd)}</p>
                 </div>
                 <Badge tone={x.status === "completada" ? "green" : "red"}>{x.status}</Badge>
                 <Btn size="sm" onClick={() => setDetail(x)}>
@@ -127,30 +128,7 @@ function Facturacion() {
         title={`Venta ${detail?.number ?? ""}`}
         wide
       >
-        {detail && (
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2 text-sm">
-              <p className="text-muted-foreground">Cliente: {detail.customerName}</p>
-              <p className="text-muted-foreground">Cajero: {detail.userName}</p>
-              <p className="num text-muted-foreground">
-                Tasa usada: {num(detail.rateSnapshot.usd)} Bs/USD
-              </p>
-              <div className="divide-y divide-border rounded-md border border-border">
-                {detail.items.map((i, k) => (
-                  <div key={k} className="flex justify-between px-3 py-2">
-                    <span className="num">
-                      {i.qty} × {i.name}
-                    </span>
-                    <span className="num">{usd(i.subtotalUsd)}</span>
-                  </div>
-                ))}
-              </div>
-              <p className="num text-right font-semibold">{usd(detail.totalUsd)}</p>
-              <p className="num text-right text-muted-foreground">{bs(detail.totalBs)}</p>
-            </div>
-            <TicketPreview sale={detail} />
-          </div>
-        )}
+        {detail && <SaleDetailPanel sale={detail} />}
       </Modal>
 
       <ConfirmDialog
@@ -166,5 +144,45 @@ function Facturacion() {
         }}
       />
     </>
+  );
+}
+
+/**
+ * Detalle de una venta ya cerrada. Usa la tasa congelada de la venta
+ * (`useSaleMoney`), igual que el ticket: una venta de ayer se ve con la tasa
+ * de ayer aunque la de hoy haya cambiado.
+ */
+function SaleDetailPanel({ sale }: { sale: Sale }) {
+  const money = useSaleMoney(sale);
+  return (
+    <div className="grid gap-4 sm:grid-cols-2">
+      <div className="space-y-2 text-sm">
+        <p className="text-muted-foreground">Cliente: {sale.customerName}</p>
+        <p className="text-muted-foreground">Cajero: {sale.userName}</p>
+        <p className="num text-muted-foreground">
+          Tasa usada: {num(sale.rateSnapshot.usd)} Bs/USD
+        </p>
+        <div className="divide-y divide-border rounded-md border border-border">
+          {sale.items.map((i, k) => (
+            <div key={k} className="flex justify-between px-3 py-2">
+              <span className="num">
+                {i.qty} × {i.name}
+              </span>
+              <span className="text-right">
+                <span className="num block">{money.fmtBsAmount(lineBs(i, money))}</span>
+                {!i.bsOnly && (
+                  <span className="num block text-xs text-muted-foreground">
+                    {usd(i.subtotalUsd)}
+                  </span>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+        <p className="num text-right font-semibold">{money.fmtBsAmount(sale.totalBs)}</p>
+        <p className="num text-right text-muted-foreground">{usd(sale.totalUsd)}</p>
+      </div>
+      <TicketPreview sale={sale} />
+    </div>
   );
 }

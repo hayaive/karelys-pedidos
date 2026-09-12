@@ -12,13 +12,14 @@ import {
   ConfirmDialog,
   Empty,
   Field,
+  Input,
   Modal,
   Select,
   Textarea,
 } from "@/components/ui-kit";
 import { useAppState } from "@/lib/store";
-import { deleteOrder, setOrderStatus, updateOrder } from "@/lib/business";
-import { dt, usd } from "@/lib/format";
+import { addOrderDeposit, deleteOrder, orderBalance, setOrderStatus, updateOrder } from "@/lib/business";
+import { dt, parseAmount, usd } from "@/lib/format";
 import type { Order, OrderStatus } from "@/lib/types";
 import { useShortcuts } from "@/lib/shortcuts";
 
@@ -54,6 +55,7 @@ function Pedidos() {
   const [processing, setProcessing] = useState<Order | null>(null);
   const [editing, setEditing] = useState<Order | null>(null);
   const [del, setDel] = useState<Order | null>(null);
+  const [depositingFor, setDepositingFor] = useState<Order | null>(null);
   const [filter, setFilter] = useState<string>("activos");
 
   useShortcuts({
@@ -144,55 +146,86 @@ function Pedidos() {
         </Card>
       ) : (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {orders.map((o) => (
-            <Card key={o.id} className="p-4">
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <p className="num text-sm font-semibold">{o.number}</p>
-                  <p className="text-sm">{o.customerName}</p>
-                  <p className="num text-xs text-muted-foreground">{dt(o.createdAt)}</p>
+          {orders.map((o) => {
+            const balance = orderBalance(o);
+            return (
+              <Card key={o.id} className="p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="num text-sm font-semibold">{o.number}</p>
+                    <p className="text-sm">{o.customerName}</p>
+                    <p className="num text-xs text-muted-foreground">{dt(o.createdAt)}</p>
+                  </div>
+                  <Badge
+                    tone={
+                      o.status === "procesado" ? "green" : o.status === "cancelado" ? "red" : "amber"
+                    }
+                  >
+                    {STATUSES.find((x) => x.key === o.status)?.label}
+                  </Badge>
                 </div>
-                <Badge
-                  tone={
-                    o.status === "procesado" ? "green" : o.status === "cancelado" ? "red" : "amber"
-                  }
-                >
-                  {STATUSES.find((x) => x.key === o.status)?.label}
-                </Badge>
-              </div>
-              <ul className="mt-3 space-y-0.5 text-xs text-muted-foreground">
-                {o.items.slice(0, 4).map((i, k) => (
-                  <li key={k} className="num">
-                    {i.qty} × {i.name}
-                  </li>
-                ))}
-                {o.items.length > 4 && <li>+{o.items.length - 4} más</li>}
-              </ul>
-              {o.note && (
-                <p className="mt-2 rounded bg-sol-vela px-2 py-1 text-xs text-sol-70">{o.note}</p>
-              )}
-              <p className="num mt-3 text-lg font-semibold">{usd(o.totalUsd)}</p>
-              {o.status !== "procesado" && o.status !== "cancelado" && (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {can("process_orders") && (
-                    <Btn size="sm" variant="amber" onClick={() => setProcessing(o)}>
-                      Procesar
-                    </Btn>
-                  )}
-                  {can("edit_orders") && (
-                    <>
-                      <Btn size="sm" onClick={() => setEditing(o)}>
-                        Editar
-                      </Btn>
-                      <Btn size="sm" variant="ghost" onClick={() => setDel(o)}>
-                        <IcoPapelera />
-                      </Btn>
-                    </>
+                <ul className="mt-3 space-y-0.5 text-xs text-muted-foreground">
+                  {o.items.slice(0, 4).map((i, k) => (
+                    <li key={k} className="num">
+                      {i.qty} × {i.name}
+                    </li>
+                  ))}
+                  {o.items.length > 4 && <li>+{o.items.length - 4} más</li>}
+                </ul>
+                {o.note && (
+                  <p className="mt-2 rounded bg-sol-vela px-2 py-1 text-xs text-sol-70">{o.note}</p>
+                )}
+                <p className="num mt-3 text-lg font-semibold">{usd(o.totalUsd)}</p>
+                <div className="mt-1.5 flex items-center justify-between gap-2">
+                  <Badge
+                    liso
+                    tone={
+                      balance.status === "pagado"
+                        ? "green"
+                        : balance.status === "abonado"
+                          ? "amber"
+                          : "neutral"
+                    }
+                  >
+                    {balance.status === "pagado"
+                      ? "Pagado"
+                      : balance.status === "abonado"
+                        ? `Abonado ${usd(balance.depositUsd)}`
+                        : "Sin abono"}
+                  </Badge>
+                  {balance.status === "abonado" && (
+                    <span className="num text-xs font-semibold text-muted-foreground">
+                      Saldo {usd(balance.balanceUsd)}
+                    </span>
                   )}
                 </div>
-              )}
-            </Card>
-          ))}
+                {o.status !== "procesado" && o.status !== "cancelado" && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {can("process_orders") && (
+                      <Btn size="sm" variant="amber" onClick={() => setProcessing(o)}>
+                        Procesar
+                      </Btn>
+                    )}
+                    {can("edit_orders") && balance.status !== "pagado" && (
+                      <Btn size="sm" onClick={() => setDepositingFor(o)}>
+                        Abonar
+                      </Btn>
+                    )}
+                    {can("edit_orders") && (
+                      <>
+                        <Btn size="sm" onClick={() => setEditing(o)}>
+                          Editar
+                        </Btn>
+                        <Btn size="sm" variant="ghost" onClick={() => setDel(o)}>
+                          <IcoPapelera />
+                        </Btn>
+                      </>
+                    )}
+                  </div>
+                )}
+              </Card>
+            );
+          })}
         </div>
       )}
 
@@ -217,7 +250,92 @@ function Pedidos() {
           setDel(null);
         }}
       />
+
+      <Modal
+        open={!!depositingFor}
+        onClose={() => setDepositingFor(null)}
+        title={`Abonar · ${depositingFor?.number ?? ""}`}
+      >
+        {depositingFor && (
+          <AddDeposit orderId={depositingFor.id} onClose={() => setDepositingFor(null)} />
+        )}
+      </Modal>
     </>
+  );
+}
+
+function AddDeposit({ orderId, onClose }: { orderId: string; onClose: () => void }) {
+  const s = useAppState();
+  const order = s.orders.find((o) => o.id === orderId);
+  const methods = s.paymentMethods.filter((m) => m.active);
+  const [methodId, setMethodId] = useState(methods[0]?.id ?? "");
+  const [amount, setAmount] = useState("");
+  const [reference, setReference] = useState("");
+  const method = methods.find((m) => m.id === methodId);
+
+  if (!order) return null;
+  const balance = orderBalance(order);
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-md border border-border bg-sup-2 p-3 text-sm">
+        <div className="flex items-center justify-between">
+          <span className="text-muted-foreground">Total del pedido</span>
+          <span className="num font-medium">{usd(balance.totalUsd)}</span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-muted-foreground">Ya abonado</span>
+          <span className="num font-medium">{usd(balance.depositUsd)}</span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="font-medium">Saldo pendiente</span>
+          <span className="num font-semibold">{usd(balance.balanceUsd)}</span>
+        </div>
+      </div>
+      <Field label="Forma de pago">
+        <Select value={methodId} onChange={(e) => setMethodId(e.target.value)}>
+          {methods.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.name} ({m.currency === "USD" ? "USD" : "Bs"})
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <Field label={`Monto en ${method?.currency === "USD" ? "USD" : "Bs"}`}>
+        <Input
+          className="num"
+          inputMode="decimal"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+        />
+      </Field>
+      {method?.requiresReference && (
+        <Field label="Referencia">
+          <Input value={reference} onChange={(e) => setReference(e.target.value)} />
+        </Field>
+      )}
+      <div className="flex justify-end gap-2">
+        <Btn onClick={onClose}>Cancelar</Btn>
+        <Btn
+          variant="amber"
+          onClick={() => {
+            if (!method) return toast.error("Selecciona la forma de pago");
+            const val = parseAmount(amount);
+            if (!Number.isFinite(val) || val <= 0) return toast.error("Monto inválido");
+            const res = addOrderDeposit(orderId, {
+              methodId: method.id,
+              amount: val,
+              reference: reference.trim() || undefined,
+            });
+            if (!res.ok) return toast.error(res.error!);
+            toast.success("Abono registrado");
+            onClose();
+          }}
+        >
+          Registrar abono
+        </Btn>
+      </div>
+    </div>
   );
 }
 

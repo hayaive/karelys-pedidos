@@ -14,12 +14,13 @@ import {
   createOrder,
   createSale,
   currentRate,
+  orderBalance,
   priceBandCheck,
   priceOf,
   totalsOf,
 } from "@/lib/business";
 import { upsertCustomer } from "@/lib/business";
-import { bs, num, usd, validCedula } from "@/lib/format";
+import { bs, num, parseAmount, usd, validCedula } from "@/lib/format";
 import type { Customer, LineItem, Payment, Product } from "@/lib/types";
 import { Badge, Btn, Card, Field, Input, Modal, Select, Textarea, inputCls } from "./ui-kit";
 import { TicketPreview } from "./ticket";
@@ -64,6 +65,21 @@ export function POS({
   const [newCustOpen, setNewCustOpen] = useState(false);
   const [customizeFor, setCustomizeFor] = useState<Product | null>(null);
   const [lastSale, setLastSale] = useState<Sale | null>(null);
+  const depositMethods = s.paymentMethods.filter((m) => m.active);
+  const [depositOn, setDepositOn] = useState(false);
+  const [depositMethodId, setDepositMethodId] = useState(depositMethods[0]?.id ?? "");
+  const [depositAmount, setDepositAmount] = useState("");
+  const [depositReference, setDepositReference] = useState("");
+  const depositMethod = depositMethods.find((m) => m.id === depositMethodId);
+  const depositRaw = parseAmount(depositAmount);
+  const depositUsdPreview =
+    Number.isFinite(depositRaw) && depositRaw > 0
+      ? depositMethod?.currency === "USD"
+        ? depositRaw
+        : rate
+          ? depositRaw / rate
+          : 0
+      : 0;
 
   const products = useMemo(
     () =>
@@ -81,6 +97,11 @@ export function POS({
   const showResults = q.trim() !== "" || cat !== "all";
 
   const { totalUsd, totalBs } = totalsOf(items, rate);
+  const liveOrder = orderId ? s.orders.find((o) => o.id === orderId) : undefined;
+  const balance = liveOrder ? orderBalance(liveOrder) : null;
+  const hasDeposits = !!balance && balance.depositUsd > 0.001;
+  const amountDueUsd = balance ? balance.balanceUsd : totalUsd;
+  const amountDueBs = rate ? amountDueUsd * rate : 0;
 
   useShortcuts({
     search_product: () => {
@@ -153,17 +174,35 @@ export function POS({
 
   function saveOrder() {
     if (!items.length) return toast.error("Agrega productos al pedido");
+    let deposit: { methodId: string; amount: number; reference?: string } | undefined;
+    if (depositOn) {
+      if (!depositMethod) return toast.error("Selecciona la forma de pago del abono");
+      const val = parseAmount(depositAmount);
+      if (!Number.isFinite(val) || val <= 0)
+        return toast.error("Ingresa el monto del abono o quítalo");
+      if (depositMethod.requiresReference && !depositReference.trim())
+        return toast.error(`"${depositMethod.name}" requiere número de referencia`);
+      deposit = {
+        methodId: depositMethod.id,
+        amount: val,
+        reference: depositReference.trim() || undefined,
+      };
+    }
     const res = createOrder({
       items,
       customerId: customer?.id ?? null,
       customerName: customer?.name ?? "Consumidor final",
       note,
+      deposit,
     });
     if (!res.ok) return toast.error(res.error!);
-    toast.success("Pedido registrado como pendiente");
+    toast.success(deposit ? "Pedido registrado con abono" : "Pedido registrado como pendiente");
     setItems([]);
     setCustomer(null);
     setNote("");
+    setDepositOn(false);
+    setDepositAmount("");
+    setDepositReference("");
     onDone?.();
   }
 
@@ -431,16 +470,95 @@ export function POS({
             <span className="text-sm text-muted-foreground">Total Bs</span>
             <span className="num text-lg font-semibold">{bs(totalBs)}</span>
           </div>
+          {hasDeposits && (
+            <>
+              <div className="flex items-center justify-between text-sol-70">
+                <span className="text-sm">Abonado</span>
+                <span className="num text-sm font-semibold">- {usd(balance!.depositUsd)}</span>
+              </div>
+              <div className="flex items-center justify-between border-t border-border pt-1.5">
+                <span className="text-sm font-medium">Saldo a cobrar</span>
+                <span className="num text-lg font-semibold">{usd(amountDueUsd)}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">Saldo en Bs</span>
+                <span className="num text-sm">{bs(amountDueBs)}</span>
+              </div>
+            </>
+          )}
           <p className="num text-right text-[11px] text-muted-foreground">Tasa BCV: {num(rate)}</p>
         </div>
         {mode === "order" && (
-          <Textarea
-            className="mb-3"
-            rows={2}
-            placeholder="Notas del pedido (ej: sin arequipe, para las 4pm)"
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-          />
+          <>
+            <Textarea
+              className="mt-3"
+              rows={2}
+              placeholder="Notas del pedido (ej: sin arequipe, para las 4pm)"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+            />
+            <div className="mb-3 space-y-2 border-t border-border py-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium">Abono adelantado</span>
+                {depositOn && (
+                  <button
+                    type="button"
+                    className="text-xs text-muted-foreground hover:text-rojo"
+                    onClick={() => {
+                      setDepositOn(false);
+                      setDepositAmount("");
+                      setDepositReference("");
+                    }}
+                  >
+                    Quitar
+                  </button>
+                )}
+              </div>
+              {!depositOn ? (
+                <Btn
+                  size="sm"
+                  className="w-full"
+                  disabled={!depositMethods.length}
+                  onClick={() => setDepositOn(true)}
+                >
+                  <IcoMas /> El cliente adelantó dinero
+                </Btn>
+              ) : (
+                <div className="space-y-2">
+                  <Select
+                    value={depositMethodId}
+                    onChange={(e) => setDepositMethodId(e.target.value)}
+                  >
+                    {depositMethods.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name} ({m.currency === "USD" ? "USD" : "Bs"})
+                      </option>
+                    ))}
+                  </Select>
+                  <Input
+                    className="num"
+                    inputMode="decimal"
+                    placeholder={depositMethod?.currency === "USD" ? "Monto en USD" : "Monto en Bs"}
+                    value={depositAmount}
+                    onChange={(e) => setDepositAmount(e.target.value)}
+                  />
+                  {depositMethod?.requiresReference && (
+                    <Input
+                      placeholder="Referencia"
+                      value={depositReference}
+                      onChange={(e) => setDepositReference(e.target.value)}
+                    />
+                  )}
+                  {depositUsdPreview > 0 && (
+                    <p className="num text-xs text-muted-foreground">
+                      ≈ {usd(depositUsdPreview)}
+                      {depositUsdPreview > totalUsd + 0.02 && " · supera el total del pedido"}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          </>
         )}
         <Btn
           variant="amber"
@@ -449,7 +567,11 @@ export function POS({
           disabled={!items.length}
           onClick={() => (mode === "order" ? saveOrder() : setPayOpen(true))}
         >
-          {mode === "order" ? "Guardar pedido" : `Procesar pago (${sc.checkout})`}
+          {mode === "order"
+            ? "Guardar pedido"
+            : hasDeposits
+              ? `Cobrar saldo (${sc.checkout})`
+              : `Procesar pago (${sc.checkout})`}
         </Btn>
       </Card>
 
@@ -478,8 +600,8 @@ export function POS({
       <PaymentModal
         open={payOpen}
         onClose={() => setPayOpen(false)}
-        totalUsd={totalUsd}
-        totalBs={totalBs}
+        totalUsd={amountDueUsd}
+        totalBs={amountDueBs}
         rate={rate}
         onConfirm={(payments) => {
           const res = createSale({
@@ -852,23 +974,3 @@ function Chip({
   );
 }
 
-function parseAmount(raw: string): number {
-  const t = raw.trim().replace(/\s/g, "");
-  if (!t) return NaN;
-  const hasComma = t.includes(",");
-  const hasDot = t.includes(".");
-  let norm = t;
-  if (hasComma && hasDot) {
-    norm =
-      t.lastIndexOf(",") > t.lastIndexOf(".")
-        ? t.replace(/\./g, "").replace(",", ".")
-        : t.replace(/,/g, "");
-  } else if (hasComma) {
-    norm = t.replace(",", ".");
-  } else if (hasDot) {
-    const parts = t.split(".");
-    const last = parts[parts.length - 1] ?? "";
-    if (parts.length > 2 || last.length === 3) norm = parts.join("");
-  }
-  return parseFloat(norm);
-}

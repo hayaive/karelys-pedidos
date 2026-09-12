@@ -211,8 +211,9 @@ export function POS({
   const LineRows = (
     <div className="divide-y divide-border">
       {items.map((i, k) => (
-        <div key={k} className="flex flex-wrap items-center gap-3 py-3">
-          <div className="min-w-0 flex-1">
+        <div key={k} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-3">
+          {/* El nombre ocupa toda la fila en teléfono para que el resto no se apriete. */}
+          <div className="min-w-0 basis-full sm:basis-auto sm:flex-1">
             <p className="truncate text-sm font-medium">{i.name}</p>
             {i.customization && <p className="text-xs text-sol-70">{i.customization}</p>}
             <p className="num text-xs text-muted-foreground">
@@ -221,31 +222,55 @@ export function POS({
               {" "}× {i.qty} und
             </p>
           </div>
-          <div className="flex items-center gap-1">
-            <Btn size="sm" onClick={() => setQty(k, i.qty - 1)}>
-              <IcoMenos />
-            </Btn>
-            <input
-              className={cn(inputCls, "num h-9 w-14 text-center")}
-              value={i.qty}
-              onChange={(e) => {
-                const v = parseInt(e.target.value.replace(/\D/g, ""), 10);
-                if (Number.isFinite(v)) setQty(k, v);
-              }}
-            />
-            <Btn size="sm" onClick={() => setQty(k, i.qty + 1)}>
-              <IcoMas />
-            </Btn>
+          {/* Contador y precio: en teléfono en fila propia, separados a los extremos. */}
+          <div className="flex flex-1 items-center justify-between gap-3 sm:flex-none sm:justify-normal">
+            <div className="flex items-center gap-1.5">
+              <Btn
+                icono
+                size="sm"
+                className="size-11 sm:size-[1.95rem]"
+                onClick={() => setQty(k, i.qty - 1)}
+                aria-label={`Quitar una unidad de ${i.name}`}
+              >
+                <IcoMenos />
+              </Btn>
+              <input
+                className={cn(inputCls, "num h-11 w-12 text-center sm:h-9 sm:w-14")}
+                value={i.qty}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value.replace(/\D/g, ""), 10);
+                  if (Number.isFinite(v)) setQty(k, v);
+                }}
+              />
+              <Btn
+                icono
+                size="sm"
+                className="size-11 sm:size-[1.95rem]"
+                onClick={() => setQty(k, i.qty + 1)}
+                aria-label={`Agregar una unidad de ${i.name}`}
+              >
+                <IcoMas />
+              </Btn>
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="text-right sm:w-24">
+                <p className="num text-sm font-semibold">{money.fmtBsAmount(lineBs(i, money))}</p>
+                {!i.bsOnly && (
+                  <p className="num text-[11px] text-muted-foreground">{usd(i.subtotalUsd)}</p>
+                )}
+              </div>
+              <Btn
+                icono
+                variant="ghost"
+                size="sm"
+                className="size-11 shrink-0 text-muted-foreground hover:text-rojo sm:size-[1.95rem]"
+                onClick={() => setQty(k, 0)}
+                aria-label={`Quitar ${i.name} del pedido`}
+              >
+                <IcoPapelera />
+              </Btn>
+            </div>
           </div>
-          <div className="w-24 text-right">
-            <p className="num text-sm font-semibold">{money.fmtBsAmount(lineBs(i, money))}</p>
-            {!i.bsOnly && (
-              <p className="num text-[11px] text-muted-foreground">{usd(i.subtotalUsd)}</p>
-            )}
-          </div>
-          <button onClick={() => setQty(k, 0)} className="text-muted-foreground hover:text-rojo">
-            <IcoPapelera />
-          </button>
         </div>
       ))}
     </div>
@@ -273,7 +298,8 @@ export function POS({
                 </div>
                 <button
                   onClick={() => setCustomer(null)}
-                  className="text-muted-foreground hover:text-rojo"
+                  className="-mr-1 grid size-10 shrink-0 place-items-center rounded-sm text-muted-foreground transition-colors hover:bg-sup-2 hover:text-rojo sm:size-7"
+                  aria-label="Quitar cliente seleccionado"
                 >
                   <IcoCerrar />
                 </button>
@@ -519,7 +545,7 @@ export function POS({
                 {depositOn && (
                   <button
                     type="button"
-                    className="text-xs text-muted-foreground hover:text-rojo"
+                    className="-my-1.5 -mr-1 rounded px-1 py-1.5 text-xs text-muted-foreground hover:text-rojo"
                     onClick={() => {
                       setDepositOn(false);
                       setDepositAmount("");
@@ -532,8 +558,7 @@ export function POS({
               </div>
               {!depositOn ? (
                 <Btn
-                  size="sm"
-                  className="w-full"
+                  className="h-11 w-full sm:h-[2.45rem]"
                   disabled={!depositMethods.length}
                   onClick={() => setDepositOn(true)}
                 >
@@ -675,9 +700,16 @@ function CustomizeForm({
           placeholder="Ej: Modelo unicornio, Feliz cumple Ana"
         />
       </Field>
-      <div className="flex justify-end gap-2">
-        <Btn onClick={onSkip}>Sin personalización</Btn>
-        <Btn variant="amber" onClick={() => onConfirm(txt || "Personalizado")}>
+      <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+        <Btn size="lg" className="w-full sm:w-auto" onClick={onSkip}>
+          Sin personalización
+        </Btn>
+        <Btn
+          size="lg"
+          variant="amber"
+          className="w-full sm:w-auto"
+          onClick={() => onConfirm(txt || "Personalizado")}
+        >
           Agregar
         </Btn>
       </div>
@@ -888,8 +920,7 @@ export function PaymentModal({
                 <Btn
                   type="button"
                   variant="outline"
-                  size="sm"
-                  className="shrink-0"
+                  className="h-11 shrink-0 sm:h-[2.45rem]"
                   onClick={() =>
                     setAmount(
                       method?.currency === "USD"
@@ -939,7 +970,8 @@ export function PaymentModal({
                 </div>
                 <button
                   onClick={() => setPayments(payments.filter((_, i) => i !== k))}
-                  className="ml-2 text-muted-foreground hover:text-rojo"
+                  className="-mr-1 ml-1 grid size-10 shrink-0 place-items-center rounded-sm text-muted-foreground transition-colors hover:bg-sup-2 hover:text-rojo sm:size-7"
+                  aria-label={`Quitar pago de ${p.methodName}`}
                 >
                   <IcoPapelera />
                 </button>
@@ -990,7 +1022,7 @@ function Chip({
     <button
       onClick={onClick}
       className={cn(
-        "shrink-0 rounded-full border px-3 py-1 text-xs transition-colors",
+        "shrink-0 rounded-full border px-3.5 py-2 text-xs transition-colors sm:px-3 sm:py-1",
         active
           ? "border-sol bg-sol-vela text-sol-70"
           : "border-border text-muted-foreground hover:bg-secondary",

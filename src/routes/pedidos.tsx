@@ -218,28 +218,53 @@ function Pedidos() {
                   )}
                 </div>
                 <div className="mt-2">
-                  <Btn size="sm" variant="ghost" onClick={() => setPrintingFor(o)}>
+                  <Btn
+                    size="sm"
+                    variant="ghost"
+                    className="h-11 w-full sm:h-[1.95rem] sm:w-auto"
+                    onClick={() => setPrintingFor(o)}
+                  >
                     <IcoImprimir /> Imprimir ticket
                   </Btn>
                 </div>
                 {o.status !== "procesado" && o.status !== "cancelado" && (
                   <div className="mt-3 flex flex-wrap gap-2">
                     {can("process_orders") && (
-                      <Btn size="sm" variant="amber" onClick={() => setProcessing(o)}>
+                      <Btn
+                        size="sm"
+                        variant="amber"
+                        className="h-11 flex-1 sm:h-[1.95rem] sm:flex-none"
+                        onClick={() => setProcessing(o)}
+                      >
                         Procesar
                       </Btn>
                     )}
                     {can("edit_orders") && balance.status !== "pagado" && (
-                      <Btn size="sm" onClick={() => setDepositingFor(o)}>
+                      <Btn
+                        size="sm"
+                        className="h-11 flex-1 sm:h-[1.95rem] sm:flex-none"
+                        onClick={() => setDepositingFor(o)}
+                      >
                         Abonar
                       </Btn>
                     )}
                     {can("edit_orders") && (
                       <>
-                        <Btn size="sm" onClick={() => setEditing(o)}>
+                        <Btn
+                          size="sm"
+                          className="h-11 flex-1 sm:h-[1.95rem] sm:flex-none"
+                          onClick={() => setEditing(o)}
+                        >
                           Editar
                         </Btn>
-                        <Btn size="sm" variant="ghost" onClick={() => setDel(o)}>
+                        <Btn
+                          icono
+                          size="sm"
+                          variant="ghost"
+                          className="size-11 shrink-0 sm:size-[1.95rem]"
+                          onClick={() => setDel(o)}
+                          aria-label={`Eliminar pedido ${o.number}`}
+                        >
                           <IcoPapelera />
                         </Btn>
                       </>
@@ -361,10 +386,14 @@ function AddDeposit({ orderId, onClose }: { orderId: string; onClose: () => void
           <Input value={reference} onChange={(e) => setReference(e.target.value)} />
         </Field>
       )}
-      <div className="flex justify-end gap-2">
-        <Btn onClick={onClose}>Cancelar</Btn>
+      <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+        <Btn size="lg" className="w-full sm:w-auto" onClick={onClose}>
+          Cancelar
+        </Btn>
         <Btn
+          size="lg"
           variant="amber"
+          className="w-full sm:w-auto"
           onClick={() => {
             if (!method) return toast.error("Selecciona la forma de pago");
             const val = parseAmount(amount);
@@ -397,9 +426,9 @@ function EditOrder({ order, onClose }: { order: Order; onClose: () => void }) {
         {items.map((i, k) => (
           <div
             key={k}
-            className="flex items-center gap-2 rounded-md border border-border px-3 py-2"
+            className="flex items-center gap-2 rounded-md border border-border px-3 py-2.5"
           >
-            <span className="flex-1 truncate text-sm">{i.name}</span>
+            <span className="min-w-0 flex-1 truncate text-sm">{i.name}</span>
             <input
               type="number"
               min={1}
@@ -418,9 +447,9 @@ function EditOrder({ order, onClose }: { order: Order; onClose: () => void }) {
                   ),
                 );
               }}
-              className="num h-8 w-16 rounded border border-border bg-card px-2 text-sm"
+              className="num h-10 w-14 shrink-0 rounded border border-border bg-card px-2 text-center text-sm"
             />
-            <span className="w-20 text-right">
+            <span className="w-20 shrink-0 text-right">
               <span className="num block text-sm">{money.fmtBsAmount(lineBs(i, money))}</span>
               {!i.bsOnly && (
                 <span className="num block text-[10px] text-muted-foreground">
@@ -430,7 +459,8 @@ function EditOrder({ order, onClose }: { order: Order; onClose: () => void }) {
             </span>
             <button
               onClick={() => setItems(items.filter((_, j) => j !== k))}
-              className="text-muted-foreground hover:text-rojo"
+              className="-mr-1 grid size-10 shrink-0 place-items-center rounded-sm text-muted-foreground transition-colors hover:bg-sup-2 hover:text-rojo"
+              aria-label={`Quitar ${i.name} del pedido`}
             >
               <IcoPapelera />
             </button>
@@ -449,10 +479,14 @@ function EditOrder({ order, onClose }: { order: Order; onClose: () => void }) {
       <Field label="Notas">
         <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} />
       </Field>
-      <div className="flex justify-end gap-2">
-        <Btn onClick={onClose}>Cancelar</Btn>
+      <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+        <Btn size="lg" className="w-full sm:w-auto" onClick={onClose}>
+          Cancelar
+        </Btn>
         <Btn
+          size="lg"
           variant="amber"
+          className="w-full sm:w-auto"
           onClick={() => {
             if (!items.length) return toast.error("El pedido debe tener productos");
             updateOrder(order.id, { items, note, status });
@@ -464,7 +498,7 @@ function EditOrder({ order, onClose }: { order: Order; onClose: () => void }) {
         </Btn>
       </div>
       <button
-        className="text-xs text-rojo hover:underline"
+        className="-mx-1 -my-1 rounded px-1 py-1 text-xs text-rojo hover:underline"
         onClick={() => {
           setOrderStatus(order.id, "cancelado");
           toast.success("Pedido cancelado");

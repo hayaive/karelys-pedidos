@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { IcoAlerta, IcoOjo, IcoOjoTachado } from "@/chasis/iconos";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { login, useSession } from "@/lib/auth";
 import { Logo, useHydrated } from "@/components/app-shell";
 import { Aviso, Btn, Field, Input } from "@/components/ui-kit";
@@ -31,6 +32,39 @@ function LoginPage() {
   const [p, setP] = useState("");
   const [show, setShow] = useState(false);
   const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  /**
+   * Entrar contra el servidor. Sin red se cae al verificador de este dispositivo,
+   * y el aviso lo dice: se está trabajando con la copia local, que es exactamente
+   * lo que el negocio pidió (la caja abre aunque no haya internet).
+   */
+  async function submit() {
+    if (busy) return;
+    setErr("");
+    setBusy(true);
+    try {
+      const res = await login(u, p);
+      if (!res.ok) {
+        setErr(res.error ?? "No se pudo iniciar sesión");
+        return;
+      }
+      if (res.mode === "offline" || res.mode === "local") {
+        toast.warning("Sin conexión con el servidor", {
+          description:
+            "Entraste con los datos guardados en este equipo. Lo que registres se sincronizará al volver la conexión.",
+          duration: 8000,
+        });
+      } else if (res.staleData) {
+        toast.warning("No se pudo traer el estado del servidor", {
+          description: "Se abre con la copia local; se reintentará en el próximo ciclo.",
+        });
+      }
+      navigate({ to: "/" });
+    } finally {
+      setBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (hydrated && user) navigate({ to: "/" });
@@ -52,9 +86,7 @@ function LoginPage() {
             className="mt-7 flex flex-col gap-[0.9rem]"
             onSubmit={(e) => {
               e.preventDefault();
-              const res = login(u, p);
-              if (!res.ok) setErr(res.error!);
-              else navigate({ to: "/" });
+              void submit();
             }}
           >
             <Field label="Usuario">
@@ -63,6 +95,7 @@ function LoginPage() {
                 onChange={(e) => setU(e.target.value)}
                 autoFocus
                 autoComplete="username"
+                disabled={busy}
               />
             </Field>
             <Field label="Contraseña">
@@ -73,6 +106,7 @@ function LoginPage() {
                   onChange={(e) => setP(e.target.value)}
                   autoComplete="current-password"
                   className="pr-10"
+                  disabled={busy}
                 />
                 <button
                   type="button"
@@ -89,7 +123,7 @@ function LoginPage() {
                 Revisa el usuario y la contraseña, o pídele acceso a un administrador.
               </Aviso>
             )}
-            <Btn type="submit" variant="amber" size="lg" bloque>
+            <Btn type="submit" variant="amber" size="lg" bloque cargando={busy}>
               Iniciar sesión
             </Btn>
           </form>

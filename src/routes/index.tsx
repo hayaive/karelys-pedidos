@@ -18,6 +18,7 @@ import { Badge, BarraProg, Btn, Card, CardHead, Cifra, Empty } from "@/component
 import { useAppState } from "@/lib/store";
 import { bs, dayKey, num, time, usd } from "@/lib/format";
 import { currentRate } from "@/lib/business";
+import { useMoney } from "@/hooks/use-money";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/")({
@@ -45,6 +46,7 @@ export const Route = createFileRoute("/")({
 
 function Dashboard() {
   const s = useAppState();
+  const money = useMoney();
   const { can } = useSession();
   const navigate = useNavigate();
   const today = dayKey();
@@ -55,7 +57,10 @@ function Dashboard() {
   const low = s.products.filter((p) => p.active && !p.isCombo && p.stock <= p.minStock);
   const cash = sales
     .flatMap((x) => x.payments)
-    .filter((p) => p.methodId === "pm-usd" || p.methodId === "pm-bs")
+    .filter((p) => {
+      const method = s.paymentMethods.find((pm) => pm.id === p.methodId);
+      return method?.currency === "USD" || method?.currency === "BS";
+    })
     .reduce((a, p) => a + p.usdEquivalent, 0);
 
   const byHour = Array.from({ length: 12 }, (_, i) => {
@@ -150,9 +155,10 @@ function Dashboard() {
               <div key={m.id} className="px-4 py-[0.6rem]">
                 <div className="flex items-center justify-between gap-3">
                   <span className="truncate text-etiqueta">{m.name}</span>
-                  <Cifra size="sm" className="shrink-0">
-                    {usd(m.total)}
-                  </Cifra>
+                  <div className="shrink-0 text-right">
+                    <Cifra size="sm">{money.fmtBs(m.total)}</Cifra>
+                    <p className="num text-[0.72rem] text-texto-3">{usd(m.total)}</p>
+                  </div>
                 </div>
                 {totalMetodos > 0 && (
                   <div className="mt-[0.4rem]">

@@ -1,7 +1,19 @@
+import { ensureColdCakeFamily } from "./catalog";
 import { SEED_PRODUCTS } from "./data/products.seed";
+import { slug, uid } from "./ids";
+import { SCHEMA_VERSION } from "./migrations";
+import {
+  COLD_CAKE_ALERT_USD,
+  COLD_CAKE_CATEGORY_ID,
+  COLD_CAKE_TARGET_USD,
+  DEFAULT_BS_ROUNDING,
+  DEFAULT_RATE_MAX_AGE_HOURS,
+} from "./pricing-rules";
 import { ALL_PERMISSIONS, type AppState, type Product } from "./types";
 
-export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+// `uid` y `slug` viven en lib/ids; se reexportan porque media app los importa
+// desde aquí.
+export { slug, uid };
 
 const now = () => new Date().toISOString();
 
@@ -105,8 +117,8 @@ export function buildSeed(): AppState {
     { id: "pm-bin", name: "Binance", currency: "USD" as const, requiresReference: true, active: true },
   ];
 
-  return {
-    version: 1,
+  const state: AppState = {
+    version: SCHEMA_VERSION,
     roles: [adminRole, cajeroRole, pedidosRole, invRole] as AppState["roles"],
     users: [
       {
@@ -122,6 +134,9 @@ export function buildSeed(): AppState {
     ],
     categories,
     priceTypes,
+    // Se llenan más abajo con ensureColdCakeFamily(), la misma función que usa
+    // la migración, para que semilla e instalación migrada queden idénticas.
+    priceGroups: [],
     products,
     movements: [],
     customers: seedCustomers(),
@@ -142,26 +157,22 @@ export function buildSeed(): AppState {
       saleNext: 1,
       orderPrefix: "P-",
       orderNext: 1,
-      coldCakeMin: 1.1,
-      coldCakeMax: 1.2,
-      coldCakeCategory: "cat-tortas-frias",
-      bsRounding: 1,
+      // Umbral de alerta y precio objetivo de tortas frías (ver pricing-rules).
+      coldCakeMin: COLD_CAKE_ALERT_USD,
+      coldCakeMax: COLD_CAKE_TARGET_USD,
+      coldCakeCategory: COLD_CAKE_CATEGORY_ID,
+      bsRounding: DEFAULT_BS_ROUNDING,
+      rateMaxAgeHours: DEFAULT_RATE_MAX_AGE_HOURS,
     },
     sessionUserId: null,
   };
+
+  ensureColdCakeFamily(state);
+  return state;
 }
 
 function rate(source: "BCV_USD" | "BCV_EUR" | "BINANCE", currency: "USD" | "EUR", value: number) {
   return { id: uid(), source, currency, value, automatic: true, userId: null, createdAt: now() };
-}
-
-export function slug(s: string) {
-  return s
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)/g, "");
 }
 
 function combo(

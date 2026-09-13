@@ -1,5 +1,7 @@
 import { useSyncExternalStore } from "react";
+import { runMigrations } from "./migrations";
 import { buildSeed, uid } from "./seed";
+import { isPairedWithBackend } from "./sync/session";
 import type { AppState } from "./types";
 
 const KEY = "karelys.db.v1";
@@ -24,18 +26,42 @@ export function loadFromDisk() {
     if (raw) {
       const parsed = JSON.parse(raw) as AppState;
       const seed = buildSeed();
-      state = { ...seed, ...parsed };
+      // La fusión es superficial salvo en `company`: ahí sí hay que combinar
+      // campo a campo, porque un objeto guardado por una versión anterior no
+      // trae las claves nuevas y reemplazaría al de la semilla por completo.
+      state = { ...seed, ...parsed, company: { ...seed.company, ...(parsed.company ?? {}) } };
+
+      // Migraciones de esquema (ver lib/migrations). Idempotentes.
+      const migration = runMigrations(state);
+      if (migration.applied.length) {
+        for (const step of migration.applied) {
+          logAudit("migracion_esquema", "app_state", step.name, {
+            from: migration.from,
+            to: migration.to,
+            notes: step.notes,
+          });
+        }
+        persist();
+      }
+
       // Corrección de tasas iniciales obsoletas (412,50 / 485,30 / 415,20)
       if (state.rates.some((r) => r.value === 412.5 || r.value === 485.3 || r.value === 415.2)) {
         state.rates = [...seed.rates, ...state.rates.filter((r) => ![412.5, 485.3, 415.2].includes(r.value))];
         persist();
       }
-      // Carga clientes de ejemplo que aún no existan (por cédula)
-      const have = new Set(state.customers.map((c) => c.cedula));
-      const missing = seed.customers.filter((c) => !have.has(c.cedula));
-      if (missing.length) {
-        state.customers = [...missing, ...state.customers];
-        persist();
+      // Clientes de ejemplo: sólo mientras este equipo no tenga backend.
+      //
+      // En un equipo emparejado la lista de clientes es del servidor (ver
+      // `applyBootstrap`, que la reemplaza), y reinyectar aquí la semilla en cada
+      // arranque resucitaría en el siguiente inicio exactamente lo que el bootstrap
+      // acaba de podar: 20 clientes de prueba que el backend no tiene.
+      if (!isPairedWithBackend()) {
+        const have = new Set(state.customers.map((c) => c.cedula));
+        const missing = seed.customers.filter((c) => !have.has(c.cedula));
+        if (missing.length) {
+          state.customers = [...missing, ...state.customers];
+          persist();
+        }
       }
     } else {
       persist();

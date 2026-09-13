@@ -11,16 +11,19 @@ import {
 import { toast } from "sonner";
 import { useAppState } from "@/lib/store";
 import {
-  coldCakeCheck,
   createOrder,
   createSale,
-  currentRate,
-  isColdCake,
+  itemsTotals,
+  lineBs,
+  orderBalance,
+  priceBandCheck,
   priceOf,
-  totalsOf,
+  unitBs,
 } from "@/lib/business";
 import { upsertCustomer } from "@/lib/business";
-import { bs, num, usd, validCedula } from "@/lib/format";
+import { useMoney } from "@/hooks/use-money";
+import type { Money } from "@/lib/money";
+import { bs, num, parseAmount, usd, validCedula } from "@/lib/format";
 import type { Customer, LineItem, Payment, Product } from "@/lib/types";
 import { Badge, Btn, Card, Field, Input, Modal, Select, Textarea, inputCls } from "./ui-kit";
 import { TicketPreview } from "./ticket";
@@ -44,7 +47,8 @@ export function POS({
   mode?: "sale" | "order";
 }) {
   const s = useAppState();
-  const rate = currentRate(s, "BCV_USD")?.value ?? 0;
+  const money = useMoney();
+  const rate = money.rate;
   const sc = shortcutsOf(s.company);
   const [items, setItems] = useState<LineItem[]>(initialItems ?? []);
   const [q, setQ] = useState("");
@@ -65,6 +69,19 @@ export function POS({
   const [newCustOpen, setNewCustOpen] = useState(false);
   const [customizeFor, setCustomizeFor] = useState<Product | null>(null);
   const [lastSale, setLastSale] = useState<Sale | null>(null);
+  const depositMethods = s.paymentMethods.filter((m) => m.active);
+  const [depositOn, setDepositOn] = useState(false);
+  const [depositMethodId, setDepositMethodId] = useState(depositMethods[0]?.id ?? "");
+  const [depositAmount, setDepositAmount] = useState("");
+  const [depositReference, setDepositReference] = useState("");
+  const depositMethod = depositMethods.find((m) => m.id === depositMethodId);
+  const depositRaw = parseAmount(depositAmount);
+  const depositUsdPreview =
+    Number.isFinite(depositRaw) && depositRaw > 0
+      ? depositMethod?.currency === "USD"
+        ? depositRaw
+        : money.toUsd(depositRaw)
+      : 0;
 
   const products = useMemo(
     () =>
@@ -81,7 +98,12 @@ export function POS({
 
   const showResults = q.trim() !== "" || cat !== "all";
 
-  const { totalUsd, totalBs } = totalsOf(items, rate);
+  const { totalUsd, totalBs } = itemsTotals(items, money);
+  const liveOrder = orderId ? s.orders.find((o) => o.id === orderId) : undefined;
+  const balance = liveOrder ? orderBalance(liveOrder) : null;
+  const hasDeposits = !!balance && balance.depositUsd > 0.001;
+  const amountDueUsd = balance ? balance.balanceUsd : totalUsd;
+  const amountDueBs = money.toBs(amountDueUsd);
 
   useShortcuts({
     search_product: () => {
@@ -100,13 +122,13 @@ export function POS({
       setCustomizeFor(p);
       return;
     }
-    const unit = p.bsOnly ? 0 : priceOf(p, priceTypeId);
-    if (isColdCake(s, p)) {
-      const chk = coldCakeCheck(s, unit, rate);
-      if (!chk.ok) {
-        toast.error(`Precio fuera del rango $${chk.min} – $${chk.max} para tortas frías`);
-        return;
-      }
+    const unit = p.bsOnly ? 0 : priceOf(s, p, priceTypeId);
+    // Sólo bloquean los grupos de precio que declaran banda (el precio general
+    // de tortas frías); los sabores diferenciados quedan fuera a propósito.
+    const chk = priceBandCheck(s, p, unit, rate);
+    if (chk.enforced && !chk.ok) {
+      toast.error(`Precio fuera del rango $${chk.min} – $${chk.max} para ${p.name}`);
+      return;
     }
     const extra = customization ? (p.customizationPrice ?? 0) : 0;
     setItems((prev) => {
@@ -154,55 +176,101 @@ export function POS({
 
   function saveOrder() {
     if (!items.length) return toast.error("Agrega productos al pedido");
-    createOrder({
+    let deposit: { methodId: string; amount: number; reference?: string } | undefined;
+    if (depositOn) {
+      if (!depositMethod) return toast.error("Selecciona la forma de pago del abono");
+      const val = parseAmount(depositAmount);
+      if (!Number.isFinite(val) || val <= 0)
+        return toast.error("Ingresa el monto del abono o quítalo");
+      if (depositMethod.requiresReference && !depositReference.trim())
+        return toast.error(`"${depositMethod.name}" requiere número de referencia`);
+      deposit = {
+        methodId: depositMethod.id,
+        amount: val,
+        reference: depositReference.trim() || undefined,
+      };
+    }
+    const res = createOrder({
       items,
       customerId: customer?.id ?? null,
       customerName: customer?.name ?? "Consumidor final",
       note,
+      deposit,
     });
-    toast.success("Pedido registrado como pendiente");
+    if (!res.ok) return toast.error(res.error!);
+    toast.success(deposit ? "Pedido registrado con abono" : "Pedido registrado como pendiente");
     setItems([]);
     setCustomer(null);
     setNote("");
+    setDepositOn(false);
+    setDepositAmount("");
+    setDepositReference("");
     onDone?.();
   }
 
   const LineRows = (
     <div className="divide-y divide-border">
       {items.map((i, k) => (
-        <div key={k} className="flex flex-wrap items-center gap-3 py-3">
-          <div className="min-w-0 flex-1">
+        <div key={k} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-3">
+          {/* El nombre ocupa toda la fila en teléfono para que el resto no se apriete. */}
+          <div className="min-w-0 basis-full sm:basis-auto sm:flex-1">
             <p className="truncate text-sm font-medium">{i.name}</p>
             {i.customization && <p className="text-xs text-sol-70">{i.customization}</p>}
             <p className="num text-xs text-muted-foreground">
-              {i.bsOnly
-                ? bs(i.unitPriceBs ?? 0)
-                : usd(i.unitPriceUsd + (i.customizationPrice ?? 0))}{" "}
-              × {i.qty} und
+              {money.fmtBsAmount(unitBs(i, money))}
+              {!i.bsOnly && <span> ({usd(i.unitPriceUsd + (i.customizationPrice ?? 0))})</span>}
+              {" "}× {i.qty} und
             </p>
           </div>
-          <div className="flex items-center gap-1">
-            <Btn size="sm" onClick={() => setQty(k, i.qty - 1)}>
-              <IcoMenos />
-            </Btn>
-            <input
-              className={cn(inputCls, "num h-9 w-14 text-center")}
-              value={i.qty}
-              onChange={(e) => {
-                const v = parseInt(e.target.value.replace(/\D/g, ""), 10);
-                if (Number.isFinite(v)) setQty(k, v);
-              }}
-            />
-            <Btn size="sm" onClick={() => setQty(k, i.qty + 1)}>
-              <IcoMas />
-            </Btn>
+          {/* Contador y precio: en teléfono en fila propia, separados a los extremos. */}
+          <div className="flex flex-1 items-center justify-between gap-3 sm:flex-none sm:justify-normal">
+            <div className="flex items-center gap-1.5">
+              <Btn
+                icono
+                size="sm"
+                className="size-11 sm:size-[1.95rem]"
+                onClick={() => setQty(k, i.qty - 1)}
+                aria-label={`Quitar una unidad de ${i.name}`}
+              >
+                <IcoMenos />
+              </Btn>
+              <input
+                className={cn(inputCls, "num h-11 w-12 text-center sm:h-9 sm:w-14")}
+                value={i.qty}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value.replace(/\D/g, ""), 10);
+                  if (Number.isFinite(v)) setQty(k, v);
+                }}
+              />
+              <Btn
+                icono
+                size="sm"
+                className="size-11 sm:size-[1.95rem]"
+                onClick={() => setQty(k, i.qty + 1)}
+                aria-label={`Agregar una unidad de ${i.name}`}
+              >
+                <IcoMas />
+              </Btn>
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="text-right sm:w-24">
+                <p className="num text-sm font-semibold">{money.fmtBsAmount(lineBs(i, money))}</p>
+                {!i.bsOnly && (
+                  <p className="num text-[11px] text-muted-foreground">{usd(i.subtotalUsd)}</p>
+                )}
+              </div>
+              <Btn
+                icono
+                variant="ghost"
+                size="sm"
+                className="size-11 shrink-0 text-muted-foreground hover:text-rojo sm:size-[1.95rem]"
+                onClick={() => setQty(k, 0)}
+                aria-label={`Quitar ${i.name} del pedido`}
+              >
+                <IcoPapelera />
+              </Btn>
+            </div>
           </div>
-          <span className="num w-20 text-right text-sm font-semibold">
-            {i.bsOnly ? bs((i.unitPriceBs ?? 0) * i.qty) : usd(i.subtotalUsd)}
-          </span>
-          <button onClick={() => setQty(k, 0)} className="text-muted-foreground hover:text-rojo">
-            <IcoPapelera />
-          </button>
         </div>
       ))}
     </div>
@@ -230,7 +298,8 @@ export function POS({
                 </div>
                 <button
                   onClick={() => setCustomer(null)}
-                  className="text-muted-foreground hover:text-rojo"
+                  className="-mr-1 grid size-10 shrink-0 place-items-center rounded-sm text-muted-foreground transition-colors hover:bg-sup-2 hover:text-rojo sm:size-7"
+                  aria-label="Quitar cliente seleccionado"
                 >
                   <IcoCerrar />
                 </button>
@@ -238,7 +307,9 @@ export function POS({
             ) : (
               <div className="space-y-2">
                 <div className="relative">
-                  <IcoBuscar />
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-texto-3">
+                    <IcoBuscar />
+                  </span>
                   <Input
                     id="cust-search"
                     className="pl-9"
@@ -292,7 +363,7 @@ export function POS({
                 {/* En teléfono se apilan: «Registrar nuevo cliente» no cabe a media fila. */}
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Btn
-                    className="flex-1"
+                    className="h-11 sm:h-[2.45rem] sm:flex-1"
                     onClick={() => {
                       setCustomer(null);
                       setCustQ("");
@@ -301,7 +372,11 @@ export function POS({
                   >
                     Consumidor final
                   </Btn>
-                  <Btn variant="amber" className="flex-1" onClick={() => setNewCustOpen(true)}>
+                  <Btn
+                    variant="amber"
+                    className="h-11 sm:h-[2.45rem] sm:flex-1"
+                    onClick={() => setNewCustOpen(true)}
+                  >
                     <IcoPersonaMas /> Registrar nuevo cliente
                   </Btn>
                 </div>
@@ -322,7 +397,9 @@ export function POS({
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
             <div className="relative flex-1">
-              <IcoBuscar />
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-texto-3">
+                <IcoBuscar />
+              </span>
               <Input
                 id="pos-search"
                 className="pl-9"
@@ -343,7 +420,7 @@ export function POS({
               ))}
             </Select>
           </div>
-          <div className="mt-2 flex gap-1.5 overflow-x-auto pb-1">
+          <div className="mt-2 flex flex-wrap gap-1.5">
             <Chip active={cat === "all"} onClick={() => setCat("all")}>
               Todo
             </Chip>
@@ -357,7 +434,7 @@ export function POS({
           {showResults && (
             <div className="mt-3 max-h-80 divide-y divide-border overflow-y-auto rounded-md border border-border">
               {products.slice(0, 40).map((p) => {
-                const price = p.bsOnly ? null : priceOf(p, priceTypeId);
+                const price = p.bsOnly ? null : priceOf(s, p, priceTypeId);
                 const low = !p.isCombo && p.stock <= p.minStock;
                 return (
                   <button
@@ -370,8 +447,15 @@ export function POS({
                     </span>
                     <span className="min-w-0 flex-1 truncate text-sm font-medium">{p.name}</span>
                     {low && <Badge tone="red">{p.stock}</Badge>}
-                    <span className="num w-24 shrink-0 text-right text-sm font-semibold text-sol-70">
-                      {p.bsOnly ? num(p.bsPrice ?? 0) + " Bs" : usd(price ?? 0)}
+                    <span className="w-24 shrink-0 text-right">
+                      <span className="num block text-sm font-semibold text-sol-70">
+                        {p.bsOnly ? bs(p.bsPrice ?? 0) : money.fmtBsAmount(money.toBsRounded(price ?? 0))}
+                      </span>
+                      {!p.bsOnly && (
+                        <span className="num block text-[11px] text-muted-foreground">
+                          {usd(price ?? 0)}
+                        </span>
+                      )}
                     </span>
                     <IcoMas />
                   </button>
@@ -415,8 +499,8 @@ export function POS({
             {items.map((i, k) => (
               <div key={k} className="flex items-center justify-between gap-2 text-sm">
                 <span className="min-w-0 truncate">{i.name}</span>
-                <span className="num shrink-0">
-                  {i.bsOnly ? bs((i.unitPriceBs ?? 0) * i.qty) : usd(i.subtotalUsd)}
+                <span className="num shrink-0 text-right">
+                  {money.fmtBsAmount(lineBs(i, money))}
                 </span>
               </div>
             ))}
@@ -424,23 +508,106 @@ export function POS({
         </div>
         <div className="space-y-1.5 border-t border-border py-3">
           <div className="flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">Total USD</span>
-            <span className="num text-lg font-semibold">{usd(totalUsd)}</span>
+            <span className="text-sm text-muted-foreground">Total</span>
+            <span className="text-right">
+              <span className="num block text-lg font-semibold">{bs(totalBs)}</span>
+              <span className="num block text-xs text-muted-foreground">{usd(totalUsd)}</span>
+            </span>
           </div>
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">Total Bs</span>
-            <span className="num text-lg font-semibold">{bs(totalBs)}</span>
-          </div>
+          {hasDeposits && (
+            <>
+              <div className="flex items-center justify-between text-sol-70">
+                <span className="text-sm">Abonado</span>
+                <span className="text-right">
+                  <span className="num block text-sm font-semibold">
+                    - {money.fmtBs(balance!.depositUsd)}
+                  </span>
+                  <span className="num block text-[11px] opacity-80">
+                    - {usd(balance!.depositUsd)}
+                  </span>
+                </span>
+              </div>
+              <div className="flex items-center justify-between border-t border-border pt-1.5">
+                <span className="text-sm font-medium">Saldo a cobrar</span>
+                <span className="text-right">
+                  <span className="num block text-lg font-semibold">{bs(amountDueBs)}</span>
+                  <span className="num block text-xs text-muted-foreground">{usd(amountDueUsd)}</span>
+                </span>
+              </div>
+            </>
+          )}
           <p className="num text-right text-[11px] text-muted-foreground">Tasa BCV: {num(rate)}</p>
         </div>
         {mode === "order" && (
-          <Textarea
-            className="mb-3"
-            rows={2}
-            placeholder="Notas del pedido (ej: sin arequipe, para las 4pm)"
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-          />
+          <>
+            <Textarea
+              className="mt-3"
+              rows={2}
+              placeholder="Notas del pedido (ej: sin arequipe, para las 4pm)"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+            />
+            <div className="mb-3 space-y-2 border-t border-border py-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium">Abono adelantado</span>
+                {depositOn && (
+                  <button
+                    type="button"
+                    className="-my-1.5 -mr-1 rounded px-1 py-1.5 text-xs text-muted-foreground hover:text-rojo"
+                    onClick={() => {
+                      setDepositOn(false);
+                      setDepositAmount("");
+                      setDepositReference("");
+                    }}
+                  >
+                    Quitar
+                  </button>
+                )}
+              </div>
+              {!depositOn ? (
+                <Btn
+                  className="h-11 w-full sm:h-[2.45rem]"
+                  disabled={!depositMethods.length}
+                  onClick={() => setDepositOn(true)}
+                >
+                  <IcoMas /> El cliente adelantó dinero
+                </Btn>
+              ) : (
+                <div className="space-y-2">
+                  <Select
+                    value={depositMethodId}
+                    onChange={(e) => setDepositMethodId(e.target.value)}
+                  >
+                    {depositMethods.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name} ({m.currency === "USD" ? "USD" : "Bs"})
+                      </option>
+                    ))}
+                  </Select>
+                  <Input
+                    className="num"
+                    inputMode="decimal"
+                    placeholder={depositMethod?.currency === "USD" ? "Monto en USD" : "Monto en Bs"}
+                    value={depositAmount}
+                    onChange={(e) => setDepositAmount(e.target.value)}
+                  />
+                  {depositMethod?.requiresReference && (
+                    <Input
+                      placeholder="Referencia"
+                      value={depositReference}
+                      onChange={(e) => setDepositReference(e.target.value)}
+                    />
+                  )}
+                  {depositUsdPreview > 0 && (
+                    <p className="num text-xs text-muted-foreground">
+                      ≈ {usd(depositUsdPreview)}
+                      {depositUsdPreview > totalUsd + 0.02 && " · supera el total del pedido"}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          </>
         )}
         <Btn
           variant="amber"
@@ -449,7 +616,11 @@ export function POS({
           disabled={!items.length}
           onClick={() => (mode === "order" ? saveOrder() : setPayOpen(true))}
         >
-          {mode === "order" ? "Guardar pedido" : `Procesar pago (${sc.checkout})`}
+          {mode === "order"
+            ? "Guardar pedido"
+            : hasDeposits
+              ? `Cobrar saldo (${sc.checkout})`
+              : `Procesar pago (${sc.checkout})`}
         </Btn>
       </Card>
 
@@ -470,6 +641,7 @@ export function POS({
       >
         <CustomizeForm
           product={customizeFor}
+          money={money}
           onSkip={() => customizeFor && add(customizeFor, "")}
           onConfirm={(txt) => customizeFor && add(customizeFor, txt)}
         />
@@ -478,9 +650,9 @@ export function POS({
       <PaymentModal
         open={payOpen}
         onClose={() => setPayOpen(false)}
-        totalUsd={totalUsd}
-        totalBs={totalBs}
-        rate={rate}
+        totalUsd={amountDueUsd}
+        totalBs={amountDueBs}
+        money={money}
         onConfirm={(payments) => {
           const res = createSale({
             items,
@@ -512,10 +684,12 @@ export function POS({
 
 function CustomizeForm({
   product,
+  money,
   onConfirm,
   onSkip,
 }: {
   product: Product | null;
+  money: Money;
   onConfirm: (t: string) => void;
   onSkip: () => void;
 }) {
@@ -524,7 +698,8 @@ function CustomizeForm({
   return (
     <div className="space-y-3">
       <p className="text-sm text-muted-foreground">
-        La personalización agrega {usd(product.customizationPrice ?? 0)} al precio según el modelo.
+        La personalización agrega {money.fmtBs(product.customizationPrice ?? 0)} (
+        {usd(product.customizationPrice ?? 0)}) al precio según el modelo.
       </p>
       <Field label="Modelo / mensaje">
         <Input
@@ -533,9 +708,16 @@ function CustomizeForm({
           placeholder="Ej: Modelo unicornio, Feliz cumple Ana"
         />
       </Field>
-      <div className="flex justify-end gap-2">
-        <Btn onClick={onSkip}>Sin personalización</Btn>
-        <Btn variant="amber" onClick={() => onConfirm(txt || "Personalizado")}>
+      <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+        <Btn size="lg" className="w-full sm:w-auto" onClick={onSkip}>
+          Sin personalización
+        </Btn>
+        <Btn
+          size="lg"
+          variant="amber"
+          className="w-full sm:w-auto"
+          onClick={() => onConfirm(txt || "Personalizado")}
+        >
           Agregar
         </Btn>
       </div>
@@ -650,17 +832,18 @@ export function PaymentModal({
   onClose,
   totalUsd,
   totalBs,
-  rate,
+  money,
   onConfirm,
 }: {
   open: boolean;
   onClose: () => void;
   totalUsd: number;
   totalBs: number;
-  rate: number;
+  money: Money;
   onConfirm: (p: Payment[]) => void;
 }) {
   const s = useAppState();
+  const rate = money.rate;
   const methods = s.paymentMethods.filter((m) => m.active);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [methodId, setMethodId] = useState(methods[0]?.id ?? "");
@@ -686,7 +869,7 @@ export function PaymentModal({
     if (!Number.isFinite(val) || val <= 0) return toast.error("Monto inválido");
     if (method.requiresReference && !reference.trim())
       return toast.error("Esta forma de pago requiere referencia");
-    const usdEq = method.currency === "USD" ? val : rate ? val / rate : 0;
+    const usdEq = method.currency === "USD" ? val : money.toUsd(val);
     setPayments([
       ...payments,
       {
@@ -707,12 +890,11 @@ export function PaymentModal({
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-3">
           <div className="rounded-md border border-border bg-sup-2 p-3">
-            <Row l="Total USD" r={usd(totalUsd)} strong />
-            <Row l="Total Bs" r={bs(totalBs)} />
+            <Row l="Total" r={bs(totalBs)} sub={usd(totalUsd)} strong />
             <div className="my-2 border-t border-border" />
-            <Row l="Pagado" r={usd(paid)} />
-            <Row l="Restante" r={usd(remaining)} strong />
-            <Row l="Vuelto" r={usd(change)} />
+            <Row l="Pagado" r={money.fmtBs(paid)} sub={usd(paid)} />
+            <Row l="Restante" r={money.fmtBs(remaining)} sub={usd(remaining)} strong />
+            <Row l="Vuelto" r={money.fmtBs(change)} sub={usd(change)} />
             <p className="num mt-2 text-[11px] text-texto-3">Tasa BCV USD {num(rate)}</p>
           </div>
           <Field label="Forma de pago">
@@ -728,7 +910,7 @@ export function PaymentModal({
             label={`Monto en ${method?.currency === "USD" ? "USD" : "Bs"}`}
             hint={
               method?.currency === "BS"
-                ? `Equivale a ${usd(parseAmount(amount) / (rate || 1) || 0)}`
+                ? `Equivale a ${usd(money.toUsd(parseAmount(amount)) || 0)}`
                 : undefined
             }
           >
@@ -738,19 +920,20 @@ export function PaymentModal({
                 inputMode="decimal"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                placeholder={method?.currency === "USD" ? num(remaining) : num(remaining * rate)}
+                placeholder={
+                  method?.currency === "USD" ? num(remaining) : num(money.toBs(remaining))
+                }
               />
               {remaining > 0.001 && (
                 <Btn
                   type="button"
                   variant="outline"
-                  size="sm"
-                  className="shrink-0"
+                  className="h-11 shrink-0 sm:h-[2.45rem]"
                   onClick={() =>
                     setAmount(
                       method?.currency === "USD"
                         ? num(remaining)
-                        : num(Math.round(remaining * rate * 100) / 100),
+                        : num(Math.round(money.toBs(remaining) * 100) / 100),
                     )
                   }
                 >
@@ -787,13 +970,16 @@ export function PaymentModal({
                 </div>
                 <div className="text-right">
                   <p className="num text-sm">
-                    {p.currency === "USD" ? usd(p.amount) : bs(p.amount)}
+                    {p.currency === "USD" ? money.fmtBs(p.amount) : bs(p.amount)}
                   </p>
-                  <p className="num text-[11px] text-muted-foreground">≈ {usd(p.usdEquivalent)}</p>
+                  <p className="num text-[11px] text-muted-foreground">
+                    {p.currency === "USD" ? usd(p.amount) : usd(p.usdEquivalent)}
+                  </p>
                 </div>
                 <button
                   onClick={() => setPayments(payments.filter((_, i) => i !== k))}
-                  className="ml-2 text-muted-foreground hover:text-rojo"
+                  className="-mr-1 ml-1 grid size-10 shrink-0 place-items-center rounded-sm text-muted-foreground transition-colors hover:bg-sup-2 hover:text-rojo sm:size-7"
+                  aria-label={`Quitar pago de ${p.methodName}`}
                 >
                   <IcoPapelera />
                 </button>
@@ -815,7 +1001,7 @@ export function PaymentModal({
   );
 }
 
-function Row({ l, r, strong }: { l: string; r: string; strong?: boolean }) {
+function Row({ l, r, sub, strong }: { l: string; r: string; sub?: string; strong?: boolean }) {
   return (
     <div className="flex items-center justify-between">
       <span
@@ -823,7 +1009,10 @@ function Row({ l, r, strong }: { l: string; r: string; strong?: boolean }) {
       >
         {l}
       </span>
-      <span className={cn("num text-sm", strong && "font-semibold")}>{r}</span>
+      <span className="text-right">
+        <span className={cn("num block text-sm", strong && "font-semibold")}>{r}</span>
+        {sub && <span className="num block text-[11px] text-muted-foreground">{sub}</span>}
+      </span>
     </div>
   );
 }
@@ -841,7 +1030,7 @@ function Chip({
     <button
       onClick={onClick}
       className={cn(
-        "shrink-0 rounded-full border px-3 py-1 text-xs transition-colors",
+        "shrink-0 rounded-full border px-3.5 py-2 text-xs transition-colors sm:px-3 sm:py-1",
         active
           ? "border-sol bg-sol-vela text-sol-70"
           : "border-border text-muted-foreground hover:bg-secondary",
@@ -852,23 +1041,3 @@ function Chip({
   );
 }
 
-function parseAmount(raw: string): number {
-  const t = raw.trim().replace(/\s/g, "");
-  if (!t) return NaN;
-  const hasComma = t.includes(",");
-  const hasDot = t.includes(".");
-  let norm = t;
-  if (hasComma && hasDot) {
-    norm =
-      t.lastIndexOf(",") > t.lastIndexOf(".")
-        ? t.replace(/\./g, "").replace(",", ".")
-        : t.replace(/,/g, "");
-  } else if (hasComma) {
-    norm = t.replace(",", ".");
-  } else if (hasDot) {
-    const parts = t.split(".");
-    const last = parts[parts.length - 1] ?? "";
-    if (parts.length > 2 || last.length === 3) norm = parts.join("");
-  }
-  return parseFloat(norm);
-}

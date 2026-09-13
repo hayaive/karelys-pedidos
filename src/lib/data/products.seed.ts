@@ -2,92 +2,14 @@
 export type SeedProduct = { code: string; name: string; category: string; mayor: number; detal: number };
 export const SEED_PRODUCTS: SeedProduct[] = [
   {
-    "code": "P001",
-    "name": "tres-leches",
-    "category": "Tortas Frías",
-    "mayor": 1.1,
-    "detal": 1.11
-  },
-  {
-    "code": "P002",
-    "name": "milhojas",
-    "category": "Tortas Frías",
-    "mayor": 1.1,
-    "detal": 1.11
-  },
-  {
-    "code": "P003",
-    "name": "fresa",
-    "category": "Tortas Frías",
-    "mayor": 1.1,
-    "detal": 1.11
-  },
-  {
-    "code": "P004",
-    "name": "arequipe",
-    "category": "Tortas Frías",
-    "mayor": 1.1,
-    "detal": 1.11
-  },
-  {
-    "code": "P005",
-    "name": "torta suiza",
-    "category": "Tortas Frías",
-    "mayor": 1.1,
-    "detal": 1.11
-  },
-  {
-    "code": "P006",
-    "name": "chocolate",
-    "category": "Tortas Frías",
-    "mayor": 1.1,
-    "detal": 1.11
-  },
-  {
-    "code": "P007",
-    "name": "choco-leche",
-    "category": "Tortas Frías",
-    "mayor": 1.1,
-    "detal": 1.11
-  },
-  {
-    "code": "P008",
-    "name": "choco-fresa",
-    "category": "Tortas Frías",
-    "mayor": 1.1,
-    "detal": 1.11
-  },
-  {
-    "code": "P009",
-    "name": "mani",
-    "category": "Tortas Frías",
-    "mayor": 1.1,
-    "detal": 1.11
-  },
-  {
-    "code": "P010",
-    "name": "choco-mani",
-    "category": "Tortas Frías",
-    "mayor": 1.1,
-    "detal": 1.11
-  },
-  {
-    "code": "P011",
-    "name": "choco-arequipe",
-    "category": "Tortas Frías",
-    "mayor": 1.1,
-    "detal": 1.11
-  },
-  {
-    "code": "P012",
-    "name": "prestigio",
-    "category": "Tortas Frías",
-    "mayor": 1.1,
-    "detal": 1.11
-  },
-  {
-    "code": "P013",
-    "name": "tornado",
+    // Producto único de la familia de tortas frías. Sustituye a los 13 sabores
+    // individuales que traía el Excel (P001–P013): el negocio ya no elige sabor
+    // al vender, así que el catálogo nace con un solo ítem. Esos códigos quedan
+    // retirados y no se reutilizan (ver COLD_CAKE_LEGACY_FLAVORS en
+    // lib/pricing-rules, que es lo que la migración v3 elimina en
+    // instalaciones existentes).
+    "code": "P060",
+    "name": "Tortas Frías",
     "category": "Tortas Frías",
     "mayor": 1.1,
     "detal": 1.11
@@ -100,9 +22,11 @@ export const SEED_PRODUCTS: SeedProduct[] = [
     "detal": 1.36
   },
   {
+    // Pertenece a la familia de tortas frías con precio propio y diferenciado
+    // (ver lib/pricing-rules). Antes estaba en "Postres".
     "code": "P015",
-    "name": "torta-quesillo",
-    "category": "Postres",
+    "name": "Torta Quesillo",
+    "category": "Tortas Frías",
     "mayor": 1.3,
     "detal": 1.36
   },
@@ -406,5 +330,15 @@ export const SEED_PRODUCTS: SeedProduct[] = [
     "category": "Fiesta",
     "mayor": 1.5,
     "detal": 1.5
+  },
+  {
+    // Segundo sabor con precio propio y diferenciado dentro de tortas frías.
+    // No venía en el Excel original; precio alineado a "Torta Quesillo"
+    // (pendiente de confirmar con el negocio).
+    "code": "P059",
+    "name": "Oreo y Brownie",
+    "category": "Tortas Frías",
+    "mayor": 1.3,
+    "detal": 1.36
   }
 ];

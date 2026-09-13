@@ -1,10 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { IcoMas, IcoPapelera } from "@/chasis/iconos";
+import { IcoImprimir, IcoMas, IcoPapelera } from "@/chasis/iconos";
 import { useState } from "react";
 import { toast } from "sonner";
 import { AppShell, PageHead } from "@/components/app-shell";
 import { useSession } from "@/lib/auth";
 import { POS } from "@/components/pos";
+import { TicketPreview } from "@/components/ticket";
 import {
   Badge,
   Btn,
@@ -12,13 +13,22 @@ import {
   ConfirmDialog,
   Empty,
   Field,
+  Input,
   Modal,
   Select,
   Textarea,
 } from "@/components/ui-kit";
 import { useAppState } from "@/lib/store";
-import { deleteOrder, setOrderStatus, updateOrder } from "@/lib/business";
-import { dt, usd } from "@/lib/format";
+import {
+  addOrderDeposit,
+  deleteOrder,
+  lineBs,
+  orderBalance,
+  setOrderStatus,
+  updateOrder,
+} from "@/lib/business";
+import { useMoney } from "@/hooks/use-money";
+import { dt, parseAmount, usd } from "@/lib/format";
 import type { Order, OrderStatus } from "@/lib/types";
 import { useShortcuts } from "@/lib/shortcuts";
 
@@ -49,11 +59,14 @@ const STATUSES: { key: OrderStatus; label: string }[] = [
 
 function Pedidos() {
   const s = useAppState();
+  const money = useMoney();
   const { can } = useSession();
   const [creating, setCreating] = useState(false);
   const [processing, setProcessing] = useState<Order | null>(null);
   const [editing, setEditing] = useState<Order | null>(null);
   const [del, setDel] = useState<Order | null>(null);
+  const [depositingFor, setDepositingFor] = useState<Order | null>(null);
+  const [printingFor, setPrintingFor] = useState<Order | null>(null);
   const [filter, setFilter] = useState<string>("activos");
 
   useShortcuts({
@@ -144,55 +157,123 @@ function Pedidos() {
         </Card>
       ) : (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {orders.map((o) => (
-            <Card key={o.id} className="p-4">
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <p className="num text-sm font-semibold">{o.number}</p>
-                  <p className="text-sm">{o.customerName}</p>
-                  <p className="num text-xs text-muted-foreground">{dt(o.createdAt)}</p>
+          {orders.map((o) => {
+            const balance = orderBalance(o);
+            return (
+              <Card key={o.id} className="p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="num text-sm font-semibold">{o.number}</p>
+                    <p className="text-sm">{o.customerName}</p>
+                    <p className="num text-xs text-muted-foreground">{dt(o.createdAt)}</p>
+                  </div>
+                  <Badge
+                    tone={
+                      o.status === "procesado" ? "green" : o.status === "cancelado" ? "red" : "amber"
+                    }
+                  >
+                    {STATUSES.find((x) => x.key === o.status)?.label}
+                  </Badge>
                 </div>
-                <Badge
-                  tone={
-                    o.status === "procesado" ? "green" : o.status === "cancelado" ? "red" : "amber"
-                  }
-                >
-                  {STATUSES.find((x) => x.key === o.status)?.label}
-                </Badge>
-              </div>
-              <ul className="mt-3 space-y-0.5 text-xs text-muted-foreground">
-                {o.items.slice(0, 4).map((i, k) => (
-                  <li key={k} className="num">
-                    {i.qty} × {i.name}
-                  </li>
-                ))}
-                {o.items.length > 4 && <li>+{o.items.length - 4} más</li>}
-              </ul>
-              {o.note && (
-                <p className="mt-2 rounded bg-sol-vela px-2 py-1 text-xs text-sol-70">{o.note}</p>
-              )}
-              <p className="num mt-3 text-lg font-semibold">{usd(o.totalUsd)}</p>
-              {o.status !== "procesado" && o.status !== "cancelado" && (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {can("process_orders") && (
-                    <Btn size="sm" variant="amber" onClick={() => setProcessing(o)}>
-                      Procesar
-                    </Btn>
-                  )}
-                  {can("edit_orders") && (
-                    <>
-                      <Btn size="sm" onClick={() => setEditing(o)}>
-                        Editar
-                      </Btn>
-                      <Btn size="sm" variant="ghost" onClick={() => setDel(o)}>
-                        <IcoPapelera />
-                      </Btn>
-                    </>
+                <ul className="mt-3 space-y-0.5 text-xs text-muted-foreground">
+                  {o.items.slice(0, 4).map((i, k) => (
+                    <li key={k} className="num">
+                      {i.qty} × {i.name}
+                    </li>
+                  ))}
+                  {o.items.length > 4 && <li>+{o.items.length - 4} más</li>}
+                </ul>
+                {o.note && (
+                  <p className="mt-2 rounded bg-sol-vela px-2 py-1 text-xs text-sol-70">{o.note}</p>
+                )}
+                <p className="mt-3">
+                  <span className="num block text-lg font-semibold">
+                    {money.fmtBs(o.totalUsd)}
+                  </span>
+                  <span className="num block text-xs text-muted-foreground">
+                    {usd(o.totalUsd)}
+                  </span>
+                </p>
+                <div className="mt-1.5 flex items-center justify-between gap-2">
+                  <Badge
+                    liso
+                    tone={
+                      balance.status === "pagado"
+                        ? "green"
+                        : balance.status === "abonado"
+                          ? "amber"
+                          : "neutral"
+                    }
+                  >
+                    {balance.status === "pagado"
+                      ? "Pagado"
+                      : balance.status === "abonado"
+                        ? `Abonado ${money.fmtBs(balance.depositUsd)}`
+                        : "Sin abono"}
+                  </Badge>
+                  {balance.status === "abonado" && (
+                    <span className="num text-xs font-semibold text-muted-foreground">
+                      Saldo {money.fmtBs(balance.balanceUsd)}
+                    </span>
                   )}
                 </div>
-              )}
-            </Card>
-          ))}
+                <div className="mt-2">
+                  <Btn
+                    size="sm"
+                    variant="ghost"
+                    className="h-11 w-full sm:h-[1.95rem] sm:w-auto"
+                    onClick={() => setPrintingFor(o)}
+                  >
+                    <IcoImprimir /> Imprimir ticket
+                  </Btn>
+                </div>
+                {o.status !== "procesado" && o.status !== "cancelado" && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {can("process_orders") && (
+                      <Btn
+                        size="sm"
+                        variant="amber"
+                        className="h-11 flex-1 sm:h-[1.95rem] sm:flex-none"
+                        onClick={() => setProcessing(o)}
+                      >
+                        Procesar
+                      </Btn>
+                    )}
+                    {can("edit_orders") && balance.status !== "pagado" && (
+                      <Btn
+                        size="sm"
+                        className="h-11 flex-1 sm:h-[1.95rem] sm:flex-none"
+                        onClick={() => setDepositingFor(o)}
+                      >
+                        Abonar
+                      </Btn>
+                    )}
+                    {can("edit_orders") && (
+                      <>
+                        <Btn
+                          size="sm"
+                          className="h-11 flex-1 sm:h-[1.95rem] sm:flex-none"
+                          onClick={() => setEditing(o)}
+                        >
+                          Editar
+                        </Btn>
+                        <Btn
+                          icono
+                          size="sm"
+                          variant="ghost"
+                          className="size-11 shrink-0 sm:size-[1.95rem]"
+                          onClick={() => setDel(o)}
+                          aria-label={`Eliminar pedido ${o.number}`}
+                        >
+                          <IcoPapelera />
+                        </Btn>
+                      </>
+                    )}
+                  </div>
+                )}
+              </Card>
+            );
+          })}
         </div>
       )}
 
@@ -211,16 +292,131 @@ function Pedidos() {
         message={`¿Eliminar el pedido ${del?.number}? Esta acción no se puede deshacer.`}
         onCancel={() => setDel(null)}
         onConfirm={() => {
-          deleteOrder(del!.id);
-          toast.success("Pedido eliminado");
+          const res = deleteOrder(del!.id);
+          if (!res.ok) toast.error(res.error!);
+          else toast.success("Pedido eliminado");
           setDel(null);
         }}
       />
+
+      <Modal
+        open={!!depositingFor}
+        onClose={() => setDepositingFor(null)}
+        title={`Abonar · ${depositingFor?.number ?? ""}`}
+      >
+        {depositingFor && (
+          <AddDeposit orderId={depositingFor.id} onClose={() => setDepositingFor(null)} />
+        )}
+      </Modal>
+
+      <Modal
+        open={!!printingFor}
+        onClose={() => setPrintingFor(null)}
+        title={`Ticket · ${printingFor?.number ?? ""}`}
+      >
+        {printingFor && <TicketPreview order={printingFor} />}
+      </Modal>
     </>
   );
 }
 
+function AddDeposit({ orderId, onClose }: { orderId: string; onClose: () => void }) {
+  const s = useAppState();
+  const money = useMoney();
+  const order = s.orders.find((o) => o.id === orderId);
+  const methods = s.paymentMethods.filter((m) => m.active);
+  const [methodId, setMethodId] = useState(methods[0]?.id ?? "");
+  const [amount, setAmount] = useState("");
+  const [reference, setReference] = useState("");
+  const method = methods.find((m) => m.id === methodId);
+
+  if (!order) return null;
+  const balance = orderBalance(order);
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-md border border-border bg-sup-2 p-3 text-sm">
+        <div className="flex items-center justify-between">
+          <span className="text-muted-foreground">Total del pedido</span>
+          <span className="text-right">
+            <span className="num block font-medium">{money.fmtBs(balance.totalUsd)}</span>
+            <span className="num block text-[11px] text-muted-foreground">
+              {usd(balance.totalUsd)}
+            </span>
+          </span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-muted-foreground">Ya abonado</span>
+          <span className="text-right">
+            <span className="num block font-medium">{money.fmtBs(balance.depositUsd)}</span>
+            <span className="num block text-[11px] text-muted-foreground">
+              {usd(balance.depositUsd)}
+            </span>
+          </span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="font-medium">Saldo pendiente</span>
+          <span className="text-right">
+            <span className="num block font-semibold">{money.fmtBs(balance.balanceUsd)}</span>
+            <span className="num block text-[11px] text-muted-foreground">
+              {usd(balance.balanceUsd)}
+            </span>
+          </span>
+        </div>
+      </div>
+      <Field label="Forma de pago">
+        <Select value={methodId} onChange={(e) => setMethodId(e.target.value)}>
+          {methods.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.name} ({m.currency === "USD" ? "USD" : "Bs"})
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <Field label={`Monto en ${method?.currency === "USD" ? "USD" : "Bs"}`}>
+        <Input
+          className="num"
+          inputMode="decimal"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+        />
+      </Field>
+      {method?.requiresReference && (
+        <Field label="Referencia">
+          <Input value={reference} onChange={(e) => setReference(e.target.value)} />
+        </Field>
+      )}
+      <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+        <Btn size="lg" className="w-full sm:w-auto" onClick={onClose}>
+          Cancelar
+        </Btn>
+        <Btn
+          size="lg"
+          variant="amber"
+          className="w-full sm:w-auto"
+          onClick={() => {
+            if (!method) return toast.error("Selecciona la forma de pago");
+            const val = parseAmount(amount);
+            if (!Number.isFinite(val) || val <= 0) return toast.error("Monto inválido");
+            const res = addOrderDeposit(orderId, {
+              methodId: method.id,
+              amount: val,
+              reference: reference.trim() || undefined,
+            });
+            if (!res.ok) return toast.error(res.error!);
+            toast.success("Abono registrado");
+            onClose();
+          }}
+        >
+          Registrar abono
+        </Btn>
+      </div>
+    </div>
+  );
+}
+
 function EditOrder({ order, onClose }: { order: Order; onClose: () => void }) {
+  const money = useMoney();
   const [items, setItems] = useState(order.items);
   const [note, setNote] = useState(order.note ?? "");
   const [status, setStatus] = useState<OrderStatus>(order.status);
@@ -230,9 +426,9 @@ function EditOrder({ order, onClose }: { order: Order; onClose: () => void }) {
         {items.map((i, k) => (
           <div
             key={k}
-            className="flex items-center gap-2 rounded-md border border-border px-3 py-2"
+            className="flex items-center gap-2 rounded-md border border-border px-3 py-2.5"
           >
-            <span className="flex-1 truncate text-sm">{i.name}</span>
+            <span className="min-w-0 flex-1 truncate text-sm">{i.name}</span>
             <input
               type="number"
               min={1}
@@ -251,12 +447,20 @@ function EditOrder({ order, onClose }: { order: Order; onClose: () => void }) {
                   ),
                 );
               }}
-              className="num h-8 w-16 rounded border border-border bg-card px-2 text-sm"
+              className="num h-10 w-14 shrink-0 rounded border border-border bg-card px-2 text-center text-sm"
             />
-            <span className="num w-20 text-right text-sm">{usd(i.subtotalUsd)}</span>
+            <span className="w-20 shrink-0 text-right">
+              <span className="num block text-sm">{money.fmtBsAmount(lineBs(i, money))}</span>
+              {!i.bsOnly && (
+                <span className="num block text-[10px] text-muted-foreground">
+                  {usd(i.subtotalUsd)}
+                </span>
+              )}
+            </span>
             <button
               onClick={() => setItems(items.filter((_, j) => j !== k))}
-              className="text-muted-foreground hover:text-rojo"
+              className="-mr-1 grid size-10 shrink-0 place-items-center rounded-sm text-muted-foreground transition-colors hover:bg-sup-2 hover:text-rojo"
+              aria-label={`Quitar ${i.name} del pedido`}
             >
               <IcoPapelera />
             </button>
@@ -275,10 +479,14 @@ function EditOrder({ order, onClose }: { order: Order; onClose: () => void }) {
       <Field label="Notas">
         <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} />
       </Field>
-      <div className="flex justify-end gap-2">
-        <Btn onClick={onClose}>Cancelar</Btn>
+      <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+        <Btn size="lg" className="w-full sm:w-auto" onClick={onClose}>
+          Cancelar
+        </Btn>
         <Btn
+          size="lg"
           variant="amber"
+          className="w-full sm:w-auto"
           onClick={() => {
             if (!items.length) return toast.error("El pedido debe tener productos");
             updateOrder(order.id, { items, note, status });
@@ -290,7 +498,7 @@ function EditOrder({ order, onClose }: { order: Order; onClose: () => void }) {
         </Btn>
       </div>
       <button
-        className="text-xs text-rojo hover:underline"
+        className="-mx-1 -my-1 rounded px-1 py-1 text-xs text-rojo hover:underline"
         onClick={() => {
           setOrderStatus(order.id, "cancelado");
           toast.success("Pedido cancelado");

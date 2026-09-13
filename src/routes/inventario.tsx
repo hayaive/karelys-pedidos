@@ -1,10 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { IcoBuscar, IcoMas } from "@/chasis/iconos";
+import { IcoAlerta, IcoBuscar, IcoMas } from "@/chasis/iconos";
 import { useState } from "react";
 import { toast } from "sonner";
 import { AppShell, PageHead } from "@/components/app-shell";
 import { useSession } from "@/lib/auth";
 import {
+  Aviso,
   Badge,
   Btn,
   Card,
@@ -18,10 +19,26 @@ import {
   Textarea,
 } from "@/components/ui-kit";
 import { logAudit, mutate, useAppState } from "@/lib/store";
-import { addMovement, priceOf } from "@/lib/business";
+import { addMovement, coldCakePriceGroups, priceOf } from "@/lib/business";
+import type { PriceFixTarget } from "@/lib/catalog";
+import { attachDefaultPriceGroup, applyPriceAlertFix, setPriceGroupAmount } from "@/lib/catalog";
+import { priceAlerts } from "@/lib/pricing";
+import {
+  queuePriceGroupPriceSet,
+  queueProductCreate,
+  queueProductPriceSet,
+  queueProductUpdate,
+} from "@/lib/sync/mutations";
+import {
+  categoryErrorText,
+  createCategory,
+  deleteCategory,
+  renameCategory,
+  useCategoryAccess,
+} from "@/lib/sync/categories";
 import { dt, num, usd } from "@/lib/format";
 import { uid } from "@/lib/seed";
-import type { Product } from "@/lib/types";
+import type { Category, PriceAlert, Product } from "@/lib/types";
 
 export const Route = createFileRoute("/inventario")({
   ssr: false,
@@ -49,7 +66,9 @@ export const Route = createFileRoute("/inventario")({
 function Inventario() {
   const s = useAppState();
   const { can } = useSession();
-  const [tab, setTab] = useState<"productos" | "categorias" | "movimientos">("productos");
+  const [tab, setTab] = useState<"productos" | "precios" | "categorias" | "movimientos">(
+    "productos",
+  );
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("all");
   const [stockFilter, setStockFilter] = useState("all");
@@ -65,6 +84,8 @@ function Inventario() {
       (p.name.toLowerCase().includes(q.toLowerCase()) ||
         p.code.toLowerCase().includes(q.toLowerCase())),
   );
+
+  const alerts = priceAlerts(s);
 
   return (
     <>
@@ -94,8 +115,20 @@ function Inventario() {
         }
       />
 
+      {alerts.length > 0 && (
+        <div className="mb-4 space-y-2">
+          {alerts.map((a) => (
+            <PriceAlertAviso
+              key={(a.priceGroupId ?? a.productIds[0] ?? "alerta") + "|" + a.priceTypeId}
+              alert={a}
+              canFix={can("edit_inventory")}
+            />
+          ))}
+        </div>
+      )}
+
       <div className="mb-4 flex gap-[0.15rem] overflow-x-auto border-b border-border">
-        {(["productos", "categorias", "movimientos"] as const).map((t) => (
+        {(["productos", "precios", "categorias", "movimientos"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -117,7 +150,9 @@ function Inventario() {
         <>
           <div className="mb-3 flex flex-col gap-2 sm:flex-row">
             <div className="relative flex-1">
-              <IcoBuscar />
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-texto-3">
+                <IcoBuscar />
+              </span>
               <Input
                 className="pl-9"
                 placeholder="Buscar producto o código"
@@ -185,7 +220,7 @@ function Inventario() {
                         <td className="num px-4 py-2.5 text-right">
                           {p.bsOnly
                             ? num(p.bsPrice ?? 0) + " Bs"
-                            : usd(priceOf(p, s.priceTypes[0]?.id))}
+                            : usd(priceOf(s, p, s.priceTypes[0]?.id))}
                         </td>
                         <td className="px-4 py-2.5">
                           <Badge tone={p.active ? "green" : "neutral"}>
@@ -227,7 +262,7 @@ function Inventario() {
                         <span className="num text-sm">
                           {p.bsOnly
                             ? num(p.bsPrice ?? 0) + " Bs"
-                            : usd(priceOf(p, s.priceTypes[0]?.id))}
+                            : usd(priceOf(s, p, s.priceTypes[0]?.id))}
                         </span>
                       </div>
                       <div className="mt-2 flex items-center gap-2">
@@ -257,6 +292,7 @@ function Inventario() {
         </>
       )}
 
+      {tab === "precios" && <PreciosAgrupados canEdit={can("edit_inventory")} />}
       {tab === "categorias" && <Categorias />}
       {tab === "movimientos" && <Movimientos />}
 
@@ -292,6 +328,145 @@ function Inventario() {
   );
 }
 
+/**
+ * Alerta de precio bajo de tortas frías. Se queda visible mientras
+ * `priceAlerts` la siga reportando (estado derivado, no un flag "visto"): si
+ * se ignora, reaparece en cada visita hasta que alguien corrija el precio.
+ */
+function PriceAlertAviso({ alert, canFix }: { alert: PriceAlert; canFix: boolean }) {
+  return (
+    <Aviso tone="red" icon={IcoAlerta} title={`Precio bajo · ${alert.priceGroupName ?? "producto"}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span>{alert.message}</span>
+        {canFix && (
+          <Btn
+            size="sm"
+            variant="amber"
+            onClick={() => {
+              let fixed: PriceFixTarget[] = [];
+              mutate((st) => {
+                fixed = applyPriceAlertFix(st, alert);
+                logAudit("precio_alerta_corregida", "price_group", alert.priceGroupId ?? "", {
+                  priceTypeId: alert.priceTypeId,
+                  from: alert.currentUsd,
+                  to: alert.suggestedUsd,
+                });
+              });
+
+              /* Encolar **después** del `mutate` y celda por celda: el precio
+                 corregido sólo en local desaparece en el siguiente `/bootstrap`,
+                 que reemplaza el catálogo completo. Es el mismo agujero que
+                 tapó `product.create/update`, y aquí es plata directa: este
+                 botón es el que sube las tortas frías a su precio objetivo.
+
+                 Se encola lo que `applyPriceAlertFix` dice que cambió, no lo que
+                 la alerta pedía: si el grupo ya no existe no cambió nada y no
+                 hay nada que mandar. */
+              for (const t of fixed) {
+                if (t.scope === "group")
+                  queuePriceGroupPriceSet(t.priceGroupId, t.priceTypeId, t.amount);
+                else queueProductPriceSet(t.productId, t.priceTypeId, t.amount);
+              }
+
+              toast.success(`Precio actualizado a ${usd(alert.suggestedUsd)}`);
+            }}
+          >
+            Subir a {usd(alert.suggestedUsd)}
+          </Btn>
+        )}
+      </div>
+    </Aviso>
+  );
+}
+
+/**
+ * Precios de las 3 unidades de precio de tortas frías (el genérico y los dos
+ * diferenciados). Cada unidad de precio agrupa uno o más productos que
+ * comparten el mismo precio; hoy cada grupo tiene un único producto, pero el
+ * agrupamiento se mantiene por si en el futuro se agregan más productos al
+ * mismo grupo. Este es el único lugar donde tiene sentido cambiar el precio
+ * de un grupo: el formulario de un producto individual ya no tiene efecto
+ * sobre la venta (ver aviso en `ProductForm`).
+ */
+function PreciosAgrupados({ canEdit }: { canEdit: boolean }) {
+  const s = useAppState();
+  const groups = coldCakePriceGroups(s);
+
+  return (
+    <Card>
+      <CardHead
+        title="Precios agrupados"
+        sub="Editar aquí cambia el precio de todos los productos que comparten este grupo de precio."
+      />
+      {groups.length === 0 ? (
+        <Empty title="Sin grupos de precio" sub="Aún no hay unidades de precio configuradas." />
+      ) : (
+        <div className="divide-y divide-border">
+          {groups.map(({ group, products }) => (
+            <div
+              key={group.id}
+              className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+            >
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{group.name}</p>
+                <p className="text-xs text-muted-foreground">
+                  {products.length} producto{products.length === 1 ? "" : "s"} con este precio
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-2 sm:flex sm:shrink-0">
+                {s.priceTypes.map((pt) => {
+                  const amount = group.prices.find((x) => x.priceTypeId === pt.id)?.amount ?? 0;
+                  return (
+                    <Field key={pt.id} label={pt.name}>
+                      <Input
+                        key={`${group.id}-${pt.id}-${amount}`}
+                        className="num sm:w-28"
+                        inputMode="decimal"
+                        disabled={!canEdit}
+                        defaultValue={String(amount)}
+                        onBlur={(e) => {
+                          const v = parseFloat(e.target.value.replace(",", ".")) || 0;
+                          if (v === amount) return;
+                          // El contrato exige un precio ≥ 0 (`@Min(0)` en
+                          // `SetPriceDto`) y un negativo sería un rechazo
+                          // **permanente**: la mutación sale de la cola y la
+                          // corrección se queda sólo en este navegador. Se para
+                          // aquí, antes de tocar el estado.
+                          if (v < 0) return toast.error("El precio no puede ser negativo");
+
+                          let queued = false;
+                          mutate((st) => {
+                            queued = setPriceGroupAmount(st, group.id, pt.id, v);
+                            logAudit("precio_grupo_editado", "price_group", group.id, {
+                              priceTypeId: pt.id,
+                              from: amount,
+                              to: v,
+                            });
+                          });
+
+                          /* Una mutación por la celda `(grupo, tipo de precio)`
+                             que se acaba de tocar, y sólo por esa: cada `Input`
+                             de esta rejilla es una celda independiente y el
+                             servidor resuelve el conflicto por celda, así que
+                             mandar las demás pisaría con valores viejos la
+                             corrección que otra caja hizo en paralelo. */
+                          if (queued) queuePriceGroupPriceSet(group.id, pt.id, v);
+
+                          toast.success(`Precio de "${group.name}" actualizado a ${usd(v)}`);
+                        }}
+                      />
+                    </Field>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () => void }) {
   const s = useAppState();
   const [f, setF] = useState<Partial<Product>>({ ...draft });
@@ -300,6 +475,10 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
     const rest = (f.prices ?? []).filter((x) => x.priceTypeId !== ptId);
     setF({ ...f, prices: [...rest, { priceTypeId: ptId, amount: v }] });
   };
+  const priceGroup = f.priceGroupId ? s.priceGroups.find((g) => g.id === f.priceGroupId) : null;
+  const priceGroupMemberCount = priceGroup
+    ? s.products.filter((p) => p.priceGroupId === priceGroup.id).length
+    : 0;
 
   return (
     <div className="grid gap-3 sm:grid-cols-2">
@@ -349,19 +528,33 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
         />
       </Field>
       <div className="sm:col-span-2">
-        <p className="mb-2 text-xs font-medium text-muted-foreground">Precios por tipo (USD)</p>
-        <div className="grid gap-2 sm:grid-cols-3">
-          {s.priceTypes.map((pt) => (
-            <Field key={pt.id} label={pt.name}>
-              <Input
-                className="num"
-                inputMode="decimal"
-                value={String(price(pt.id))}
-                onChange={(e) => setPrice(pt.id, parseFloat(e.target.value.replace(",", ".")) || 0)}
-              />
-            </Field>
-          ))}
-        </div>
+        {priceGroup ? (
+          <Aviso tone="amber" icon={IcoAlerta} title="Precio gestionado por grupo">
+            Este producto pertenece al grupo de precio «{priceGroup.name}». Su precio de venta lo
+            dicta ese grupo, no el precio propio de abajo — edítalo desde la pestaña{" "}
+            <strong>Precios</strong> de esta sección para que aplique a los{" "}
+            {priceGroupMemberCount} producto{priceGroupMemberCount === 1 ? "" : "s"} del grupo a
+            la vez.
+          </Aviso>
+        ) : (
+          <>
+            <p className="mb-2 text-xs font-medium text-muted-foreground">Precios por tipo (USD)</p>
+            <div className="grid gap-2 sm:grid-cols-3">
+              {s.priceTypes.map((pt) => (
+                <Field key={pt.id} label={pt.name}>
+                  <Input
+                    className="num"
+                    inputMode="decimal"
+                    value={String(price(pt.id))}
+                    onChange={(e) =>
+                      setPrice(pt.id, parseFloat(e.target.value.replace(",", ".")) || 0)
+                    }
+                  />
+                </Field>
+              ))}
+            </div>
+          </>
+        )}
       </div>
       <Field label="Sólo en bolívares">
         <Select
@@ -408,10 +601,28 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
           onClick={() => {
             if (!f.name?.trim() || !f.code?.trim())
               return toast.error("Código y nombre son obligatorios");
+            // El contrato exige cantidades no negativas. Se comprueba aquí porque
+            // un rechazo del servidor es **permanente**: la mutación sale de la
+            // cola, el producto se queda sólo en este navegador y el siguiente
+            // bootstrap —que reemplaza el catálogo completo— se lo lleva.
+            if ((f.stock ?? 0) < 0 || (f.minStock ?? 0) < 0)
+              return toast.error("El stock y el stock mínimo no pueden ser negativos");
+
+            const desiredStock = f.stock ?? 0;
+            let created: Product | undefined;
+            let edited: Product | undefined;
+            let stockBefore = desiredStock;
+
             mutate((st) => {
               if (f.id) {
                 const ex = st.products.find((x) => x.id === f.id);
-                if (ex) Object.assign(ex, f);
+                if (ex) {
+                  stockBefore = ex.stock;
+                  Object.assign(ex, f);
+                  // Si pasó a una familia con precio general, hereda el grupo.
+                  attachDefaultPriceGroup(st, ex);
+                  edited = ex;
+                }
                 logAudit("producto_editado", "product", f.id);
               } else {
                 const p: Product = {
@@ -429,10 +640,52 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
                   prices: f.prices ?? [],
                   createdAt: new Date().toISOString(),
                 };
+                attachDefaultPriceGroup(st, p);
                 st.products.unshift(p);
+                created = p;
                 logAudit("producto_creado", "product", p.id);
               }
             });
+
+            /* Encolar va **después** del `mutate`, con el producto ya en su forma
+               final (el grupo de precio que acaba de heredar incluido), y en este
+               orden: la cola se aplica en secuencia en el servidor, así que el
+               producto existe allí antes del movimiento que le fija la existencia.
+
+               El `stock` no viaja en `product.create` ni en `product.update` —el
+               servidor es la única fuente de verdad de la existencia y sólo la
+               mueve un movimiento de inventario—, así que el número del formulario
+               se asienta como `ajuste`, que es la misma pieza que usa el formulario
+               de movimientos de esta pantalla. Sin esto el producto se crearía en
+               el servidor con stock 0 y el número local desaparecería en el
+               siguiente ciclo.
+
+               `ajuste` y no `entrada` a propósito: fija la existencia final en vez
+               de sumar, así que es idempotente y no depende de en qué estado esté
+               el servidor. Como `applyMovement` también lo aplica en local, un
+               `entrada` duplicaría aquí el stock que ya tiene el producto. */
+            if (created) {
+              queueProductCreate(created);
+              if (desiredStock > 0)
+                addMovement(
+                  created.id,
+                  desiredStock,
+                  "ajuste",
+                  "Stock inicial",
+                  "Existencia declarada al crear el producto",
+                );
+            } else if (edited) {
+              queueProductUpdate(edited.id, edited);
+              if (desiredStock !== stockBefore)
+                addMovement(
+                  edited.id,
+                  desiredStock,
+                  "ajuste",
+                  "Ajuste manual",
+                  "Stock corregido desde el formulario del producto",
+                );
+            }
+
             toast.success("Producto guardado");
             onClose();
           }}
@@ -503,67 +756,230 @@ function MovementForm({ product, onClose }: { product: Product; onClose: () => v
   );
 }
 
+/**
+ * Categorías. A diferencia del resto de la pantalla **no** se gestionan en local:
+ * el backend las declara `ONLINE_ONLY` (no hay mutación de cola que las cree), así
+ * que cada alta, renombrado o borrado va por HTTP y el estado local sólo se toca
+ * cuando el servidor confirma. Sin conexión los controles quedan deshabilitados con
+ * el motivo a la vista: crear una categoría que el servidor no conoce se lleva por
+ * delante, en el siguiente bootstrap, a la categoría **y** a los productos que
+ * apunten a ella. Ver `lib/sync/categories.ts`.
+ */
 function Categorias() {
   const s = useAppState();
+  const { can } = useSession();
+  const acceso = useCategoryAccess();
   const [name, setName] = useState("");
+  const [creando, setCreando] = useState(false);
+
+  const sinConexion = acceso.mode === "blocked" ? acceso.reason : undefined;
+  // Los mismos permisos que exige el backend: alta y edición con `manage_settings`
+  // **o** `edit_inventory`; el borrado sólo con `manage_settings`.
+  const edicion = candado(
+    sinConexion,
+    can("manage_settings") || can("edit_inventory"),
+    "Necesitas permiso de inventario o de ajustes para gestionar categorías.",
+  );
+  const borrado = candado(
+    sinConexion,
+    can("manage_settings"),
+    "Sólo un administrador puede eliminar categorías.",
+  );
+  const bloqueado = edicion.bloqueado;
+  const motivo = edicion.motivo;
+
+  async function agregar() {
+    if (bloqueado || creando || !name.trim()) return;
+    setCreando(true);
+    try {
+      const cat = await createCategory(name);
+      setName("");
+      toast.success(`Categoría "${cat.name}" creada`);
+    } catch (err) {
+      toast.error("No se pudo crear la categoría", { description: categoryErrorText(err) });
+    } finally {
+      setCreando(false);
+    }
+  }
+
   return (
     <Card>
-      <CardHead title="Categorías" />
+      <CardHead
+        title="Categorías"
+        sub={
+          acceso.mode === "local" ? undefined : "Se gestionan en el servidor: hace falta conexión."
+        }
+      />
+      {(edicion.motivo ?? borrado.motivo) && (
+        <div className="px-3 pt-3">
+          <Aviso tone="amber" icon={IcoAlerta}>
+            {edicion.motivo ?? borrado.motivo}
+          </Aviso>
+        </div>
+      )}
       <div className="flex gap-2 border-b border-border p-3">
         <Input
           placeholder="Nueva categoría"
           value={name}
+          maxLength={80}
+          disabled={bloqueado || creando}
+          title={motivo}
           onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void agregar();
+          }}
         />
         <Btn
           variant="amber"
-          onClick={() => {
-            if (!name.trim()) return;
-            mutate((st) => {
-              st.categories.push({ id: uid(), name: name.trim(), active: true });
-              logAudit("categoria_creada", "category", name);
-            });
-            setName("");
-            toast.success("Categoría creada");
-          }}
+          disabled={bloqueado || !name.trim()}
+          cargando={creando}
+          title={motivo}
+          onClick={() => void agregar()}
         >
           Agregar
         </Btn>
       </div>
-      <div className="divide-y divide-border">
-        {s.categories.map((c) => (
-          <div key={c.id} className="flex items-center gap-3 px-4 py-2.5">
-            <input
-              defaultValue={c.name}
-              onBlur={(e) =>
-                mutate((st) => {
-                  const cat = st.categories.find((x) => x.id === c.id);
-                  if (cat) cat.name = e.target.value;
-                })
-              }
-              className="flex-1 bg-transparent text-sm outline-none"
+      {s.categories.length === 0 ? (
+        <Empty
+          title="Sin categorías"
+          sub="Cada producto pertenece a una: crea la primera arriba."
+        />
+      ) : (
+        <div className="divide-y divide-border">
+          {s.categories.map((c) => (
+            <FilaCategoria
+              key={c.id}
+              cat={c}
+              productos={s.products.filter((p) => p.categoryId === c.id).length}
+              edicion={edicion}
+              borrado={borrado}
             />
-            <span className="num text-xs text-muted-foreground">
-              {s.products.filter((p) => p.categoryId === c.id).length} productos
-            </span>
-            <Btn
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                if (s.products.some((p) => p.categoryId === c.id))
-                  return toast.error("La categoría tiene productos");
-                mutate((st) => {
-                  st.categories = st.categories.filter((x) => x.id !== c.id);
-                });
-                toast.success("Categoría eliminada");
-              }}
-            >
-              Eliminar
-            </Btn>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </Card>
+  );
+}
+
+/**
+ * Por qué un control de categorías está cerrado: sin conexión o sin permiso. Un
+ * solo objeto por acción, para que el botón y su explicación no puedan
+ * desincronizarse.
+ */
+interface Candado {
+  bloqueado: boolean;
+  motivo?: string;
+}
+
+function candado(sinConexion: string | undefined, permitido: boolean, sinPermiso: string): Candado {
+  // La conexión se explica primero: es lo que el usuario puede arreglar.
+  const motivo = sinConexion ?? (permitido ? undefined : sinPermiso);
+  return { bloqueado: !!motivo, motivo };
+}
+
+function FilaCategoria({
+  cat,
+  productos,
+  edicion,
+  borrado,
+}: {
+  cat: Category;
+  productos: number;
+  edicion: Candado;
+  borrado: Candado;
+}) {
+  const [name, setName] = useState(cat.name);
+  /** El nombre que trajo el estado la última vez que se sincronizó con el input. */
+  const [adoptado, setAdoptado] = useState(cat.name);
+  const [guardando, setGuardando] = useState(false);
+  const [borrando, setBorrando] = useState(false);
+
+  // El nombre cambió en el estado (lo renombró otro equipo y llegó por sync, o
+  // acabó de confirmarlo el servidor): el input adopta el valor autoritativo en
+  // lugar de quedarse enseñando uno viejo.
+  if (adoptado !== cat.name) {
+    setAdoptado(cat.name);
+    setName(cat.name);
+  }
+
+  const ocupado = guardando || borrando;
+
+  async function guardarNombre() {
+    const limpio = name.trim();
+    if (ocupado || limpio === cat.name) {
+      setName(cat.name);
+      return;
+    }
+    if (!limpio) {
+      setName(cat.name);
+      toast.error("La categoría necesita un nombre");
+      return;
+    }
+    // Red de seguridad: el input ya está deshabilitado, pero si el acceso se cayó
+    // mientras se escribía, el cambio se revierte en lugar de quedarse sólo aquí.
+    if (edicion.bloqueado) {
+      setName(cat.name);
+      toast.error("No se pudo renombrar la categoría", { description: edicion.motivo });
+      return;
+    }
+    setGuardando(true);
+    try {
+      await renameCategory(cat.id, limpio);
+      toast.success("Categoría actualizada");
+    } catch (err) {
+      setName(cat.name);
+      toast.error("No se pudo renombrar la categoría", { description: categoryErrorText(err) });
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  async function eliminar() {
+    if (ocupado || borrado.bloqueado) return;
+    // El servidor también lo niega (409 `has_history`): esto evita el viaje.
+    if (productos > 0) {
+      toast.error("La categoría tiene productos");
+      return;
+    }
+    setBorrando(true);
+    try {
+      await deleteCategory(cat.id);
+      toast.success("Categoría eliminada");
+    } catch (err) {
+      toast.error("No se pudo eliminar la categoría", { description: categoryErrorText(err) });
+    } finally {
+      setBorrando(false);
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-3 px-4 py-2.5">
+      <input
+        value={name}
+        maxLength={80}
+        disabled={edicion.bloqueado || ocupado}
+        title={edicion.motivo}
+        aria-label={`Nombre de la categoría ${cat.name}`}
+        onChange={(e) => setName(e.target.value)}
+        onBlur={() => void guardarNombre()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") setName(cat.name);
+        }}
+        className="flex-1 bg-transparent text-sm outline-none disabled:cursor-not-allowed disabled:opacity-60"
+      />
+      <span className="num text-xs text-muted-foreground">{productos} productos</span>
+      <Btn
+        size="sm"
+        variant="ghost"
+        disabled={borrado.bloqueado}
+        cargando={borrando}
+        title={borrado.motivo}
+        onClick={() => void eliminar()}
+      >
+        Eliminar
+      </Btn>
+    </div>
   );
 }
 

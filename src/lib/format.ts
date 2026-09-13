@@ -31,3 +31,25 @@ export const longDate = (d = new Date()) =>
 export function validCedula(v: string) {
   return /^[VEJPG]-?\d{6,9}$/i.test(v.trim());
 }
+
+/** Parsea un monto tecleado a mano, tolerando "," o "." como separador decimal o de miles. */
+export function parseAmount(raw: string): number {
+  const t = raw.trim().replace(/\s/g, "");
+  if (!t) return NaN;
+  const hasComma = t.includes(",");
+  const hasDot = t.includes(".");
+  let norm = t;
+  if (hasComma && hasDot) {
+    norm =
+      t.lastIndexOf(",") > t.lastIndexOf(".")
+        ? t.replace(/\./g, "").replace(",", ".")
+        : t.replace(/,/g, "");
+  } else if (hasComma) {
+    norm = t.replace(",", ".");
+  } else if (hasDot) {
+    const parts = t.split(".");
+    const last = parts[parts.length - 1] ?? "";
+    if (parts.length > 2 || last.length === 3) norm = parts.join("");
+  }
+  return parseFloat(norm);
+}

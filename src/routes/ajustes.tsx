@@ -22,8 +22,9 @@ import {
   Modal,
   Select,
 } from "@/components/ui-kit";
-import { logAudit, mutate, resetDatabase, useAppState } from "@/lib/store";
+import { getState, logAudit, mutate, resetDatabase, useAppState } from "@/lib/store";
 import { attachDefaultPriceGroup } from "@/lib/catalog";
+import { categoryErrorText, createCategory, useCategoryAccess } from "@/lib/sync/categories";
 import { uid } from "@/lib/seed";
 import { dt, num } from "@/lib/format";
 import { ALL_PERMISSIONS, type Permission, type User } from "@/lib/types";
@@ -715,6 +716,109 @@ function Impresion() {
 function Datos() {
   const s = useAppState();
   const [reset, setReset] = useState(false);
+  const acceso = useCategoryAccess();
+  const [importando, setImportando] = useState(false);
+
+  /**
+   * Importa el CSV.
+   *
+   * Las categorías que el CSV trae y no existen se crean **primero y contra el
+   * servidor** (`lib/sync/categories.ts`), antes de tocar el estado local: son
+   * `ONLINE_ONLY` en el backend, así que una creada sólo aquí desaparece en el
+   * siguiente bootstrap y se lleva con ella los productos que la referencian. Si no
+   * se pueden crear, no se importa nada: es preferible a dejar productos apuntando
+   * a una categoría que el servidor no conoce.
+   *
+   * Los productos siguen yendo a local tal cual estaban (esta pantalla no los
+   * encola; ver el informe de esta tarea).
+   */
+  async function importarCsv(text: string) {
+    const rows = text
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .slice(1)
+      .map((line) => line.split(","))
+      .filter(([code, name]) => code?.trim() && name?.trim());
+
+    if (!rows.length) {
+      toast.error("El CSV no trae filas que importar");
+      return;
+    }
+
+    const nombreCat = (category?: string) => (category?.trim() ? category.trim() : "Sin categoría");
+    const clave = (nombre: string) => nombre.toLowerCase();
+
+    const existentes = new Set(getState().categories.map((c) => clave(c.name.trim())));
+    const faltantes: string[] = [];
+    for (const [, , category] of rows) {
+      const nombre = nombreCat(category);
+      if (existentes.has(clave(nombre))) continue;
+      existentes.add(clave(nombre));
+      faltantes.push(nombre);
+    }
+
+    if (faltantes.length && acceso.mode === "blocked") {
+      toast.error(
+        `El CSV trae ${faltantes.length} categorías nuevas y crearlas necesita conexión`,
+        { description: acceso.reason },
+      );
+      return;
+    }
+    for (const nombre of faltantes) {
+      try {
+        await createCategory(nombre);
+      } catch (err) {
+        toast.error(`No se pudo crear la categoría "${nombre}": no se importó nada`, {
+          description: categoryErrorText(err),
+        });
+        return;
+      }
+    }
+
+    let count = 0;
+    let omitidas = 0;
+    mutate((st) => {
+      for (const [code, name, category, mayor, detal, stock] of rows) {
+        const cat = st.categories.find((c) => clave(c.name.trim()) === clave(nombreCat(category)));
+        // No debería pasar (se acaban de crear), y si pasa la fila se omite: un
+        // producto con un `categoryId` inexistente es justo lo que se evita.
+        if (!cat) {
+          omitidas++;
+          continue;
+        }
+        const existing = st.products.find((p) => p.code === code.trim());
+        const prices = st.priceTypes.map((pt, i) => ({
+          priceTypeId: pt.id,
+          amount: parseFloat((i === 0 ? mayor : detal) || mayor || "0") || 0,
+        }));
+        if (existing) {
+          Object.assign(existing, { name: name.trim(), categoryId: cat.id, prices });
+          attachDefaultPriceGroup(st, existing);
+        } else {
+          const nuevo = {
+            id: uid(),
+            code: code.trim(),
+            name: name.trim(),
+            categoryId: cat.id,
+            stock: parseFloat(stock || "0") || 0,
+            minStock: 5,
+            active: true,
+            prices,
+            createdAt: new Date().toISOString(),
+          };
+          // Mantiene la invariante de las familias con precio general.
+          attachDefaultPriceGroup(st, nuevo);
+          st.products.push(nuevo);
+        }
+        count++;
+      }
+      logAudit("importacion_productos", "product", "csv", { count });
+    });
+
+    toast.success(`${count} productos importados`);
+    if (omitidas) toast.warning(`${omitidas} filas omitidas: su categoría no existe`);
+  }
+
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Card>
@@ -727,57 +831,27 @@ function Datos() {
             type="file"
             accept=".csv,text/csv"
             className="text-xs"
+            disabled={importando}
             onChange={(e) => {
               const file = e.target.files?.[0];
               if (!file) return;
+              // El input se limpia para que reimportar el mismo archivo vuelva a
+              // disparar el `change`.
+              e.target.value = "";
               const r = new FileReader();
               r.onload = () => {
-                const lines = String(r.result).split(/\r?\n/).filter(Boolean).slice(1);
-                let count = 0;
-                mutate((st) => {
-                  for (const line of lines) {
-                    const [code, name, category, mayor, detal, stock] = line.split(",");
-                    if (!code || !name) continue;
-                    let cat = st.categories.find(
-                      (c) => c.name.toLowerCase() === (category ?? "").trim().toLowerCase(),
-                    );
-                    if (!cat) {
-                      cat = { id: uid(), name: (category || "Sin categoría").trim(), active: true };
-                      st.categories.push(cat);
-                    }
-                    const existing = st.products.find((p) => p.code === code.trim());
-                    const prices = st.priceTypes.map((pt, i) => ({
-                      priceTypeId: pt.id,
-                      amount: parseFloat((i === 0 ? mayor : detal) || mayor || "0") || 0,
-                    }));
-                    if (existing) {
-                      Object.assign(existing, { name: name.trim(), categoryId: cat.id, prices });
-                      attachDefaultPriceGroup(st, existing);
-                    } else {
-                      const nuevo = {
-                        id: uid(),
-                        code: code.trim(),
-                        name: name.trim(),
-                        categoryId: cat.id,
-                        stock: parseFloat(stock || "0") || 0,
-                        minStock: 5,
-                        active: true,
-                        prices,
-                        createdAt: new Date().toISOString(),
-                      };
-                      // Mantiene la invariante de las familias con precio general.
-                      attachDefaultPriceGroup(st, nuevo);
-                      st.products.push(nuevo);
-                    }
-                    count++;
-                  }
-                  logAudit("importacion_productos", "product", "csv", { count });
-                });
-                toast.success(`${count} productos importados`);
+                setImportando(true);
+                void importarCsv(String(r.result)).finally(() => setImportando(false));
               };
               r.readAsText(file);
             }}
           />
+          {acceso.mode === "blocked" && (
+            <p className="text-xs text-sol-70">
+              Sin conexión sólo se pueden importar productos de categorías que ya existen.{" "}
+              {acceso.reason}
+            </p>
+          )}
           <p className="text-xs text-muted-foreground">
             El catálogo inicial ({s.products.filter((p) => !p.isCombo).length} productos) ya fue
             cargado desde el Excel entregado, más {s.products.filter((p) => p.isCombo).length}{" "}

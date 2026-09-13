@@ -29,9 +29,16 @@ import {
   queueProductPriceSet,
   queueProductUpdate,
 } from "@/lib/sync/mutations";
+import {
+  categoryErrorText,
+  createCategory,
+  deleteCategory,
+  renameCategory,
+  useCategoryAccess,
+} from "@/lib/sync/categories";
 import { dt, num, usd } from "@/lib/format";
 import { uid } from "@/lib/seed";
-import type { PriceAlert, Product } from "@/lib/types";
+import type { Category, PriceAlert, Product } from "@/lib/types";
 
 export const Route = createFileRoute("/inventario")({
   ssr: false,
@@ -749,67 +756,230 @@ function MovementForm({ product, onClose }: { product: Product; onClose: () => v
   );
 }
 
+/**
+ * Categorías. A diferencia del resto de la pantalla **no** se gestionan en local:
+ * el backend las declara `ONLINE_ONLY` (no hay mutación de cola que las cree), así
+ * que cada alta, renombrado o borrado va por HTTP y el estado local sólo se toca
+ * cuando el servidor confirma. Sin conexión los controles quedan deshabilitados con
+ * el motivo a la vista: crear una categoría que el servidor no conoce se lleva por
+ * delante, en el siguiente bootstrap, a la categoría **y** a los productos que
+ * apunten a ella. Ver `lib/sync/categories.ts`.
+ */
 function Categorias() {
   const s = useAppState();
+  const { can } = useSession();
+  const acceso = useCategoryAccess();
   const [name, setName] = useState("");
+  const [creando, setCreando] = useState(false);
+
+  const sinConexion = acceso.mode === "blocked" ? acceso.reason : undefined;
+  // Los mismos permisos que exige el backend: alta y edición con `manage_settings`
+  // **o** `edit_inventory`; el borrado sólo con `manage_settings`.
+  const edicion = candado(
+    sinConexion,
+    can("manage_settings") || can("edit_inventory"),
+    "Necesitas permiso de inventario o de ajustes para gestionar categorías.",
+  );
+  const borrado = candado(
+    sinConexion,
+    can("manage_settings"),
+    "Sólo un administrador puede eliminar categorías.",
+  );
+  const bloqueado = edicion.bloqueado;
+  const motivo = edicion.motivo;
+
+  async function agregar() {
+    if (bloqueado || creando || !name.trim()) return;
+    setCreando(true);
+    try {
+      const cat = await createCategory(name);
+      setName("");
+      toast.success(`Categoría "${cat.name}" creada`);
+    } catch (err) {
+      toast.error("No se pudo crear la categoría", { description: categoryErrorText(err) });
+    } finally {
+      setCreando(false);
+    }
+  }
+
   return (
     <Card>
-      <CardHead title="Categorías" />
+      <CardHead
+        title="Categorías"
+        sub={
+          acceso.mode === "local" ? undefined : "Se gestionan en el servidor: hace falta conexión."
+        }
+      />
+      {(edicion.motivo ?? borrado.motivo) && (
+        <div className="px-3 pt-3">
+          <Aviso tone="amber" icon={IcoAlerta}>
+            {edicion.motivo ?? borrado.motivo}
+          </Aviso>
+        </div>
+      )}
       <div className="flex gap-2 border-b border-border p-3">
         <Input
           placeholder="Nueva categoría"
           value={name}
+          maxLength={80}
+          disabled={bloqueado || creando}
+          title={motivo}
           onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void agregar();
+          }}
         />
         <Btn
           variant="amber"
-          onClick={() => {
-            if (!name.trim()) return;
-            mutate((st) => {
-              st.categories.push({ id: uid(), name: name.trim(), active: true });
-              logAudit("categoria_creada", "category", name);
-            });
-            setName("");
-            toast.success("Categoría creada");
-          }}
+          disabled={bloqueado || !name.trim()}
+          cargando={creando}
+          title={motivo}
+          onClick={() => void agregar()}
         >
           Agregar
         </Btn>
       </div>
-      <div className="divide-y divide-border">
-        {s.categories.map((c) => (
-          <div key={c.id} className="flex items-center gap-3 px-4 py-2.5">
-            <input
-              defaultValue={c.name}
-              onBlur={(e) =>
-                mutate((st) => {
-                  const cat = st.categories.find((x) => x.id === c.id);
-                  if (cat) cat.name = e.target.value;
-                })
-              }
-              className="flex-1 bg-transparent text-sm outline-none"
+      {s.categories.length === 0 ? (
+        <Empty
+          title="Sin categorías"
+          sub="Cada producto pertenece a una: crea la primera arriba."
+        />
+      ) : (
+        <div className="divide-y divide-border">
+          {s.categories.map((c) => (
+            <FilaCategoria
+              key={c.id}
+              cat={c}
+              productos={s.products.filter((p) => p.categoryId === c.id).length}
+              edicion={edicion}
+              borrado={borrado}
             />
-            <span className="num text-xs text-muted-foreground">
-              {s.products.filter((p) => p.categoryId === c.id).length} productos
-            </span>
-            <Btn
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                if (s.products.some((p) => p.categoryId === c.id))
-                  return toast.error("La categoría tiene productos");
-                mutate((st) => {
-                  st.categories = st.categories.filter((x) => x.id !== c.id);
-                });
-                toast.success("Categoría eliminada");
-              }}
-            >
-              Eliminar
-            </Btn>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </Card>
+  );
+}
+
+/**
+ * Por qué un control de categorías está cerrado: sin conexión o sin permiso. Un
+ * solo objeto por acción, para que el botón y su explicación no puedan
+ * desincronizarse.
+ */
+interface Candado {
+  bloqueado: boolean;
+  motivo?: string;
+}
+
+function candado(sinConexion: string | undefined, permitido: boolean, sinPermiso: string): Candado {
+  // La conexión se explica primero: es lo que el usuario puede arreglar.
+  const motivo = sinConexion ?? (permitido ? undefined : sinPermiso);
+  return { bloqueado: !!motivo, motivo };
+}
+
+function FilaCategoria({
+  cat,
+  productos,
+  edicion,
+  borrado,
+}: {
+  cat: Category;
+  productos: number;
+  edicion: Candado;
+  borrado: Candado;
+}) {
+  const [name, setName] = useState(cat.name);
+  /** El nombre que trajo el estado la última vez que se sincronizó con el input. */
+  const [adoptado, setAdoptado] = useState(cat.name);
+  const [guardando, setGuardando] = useState(false);
+  const [borrando, setBorrando] = useState(false);
+
+  // El nombre cambió en el estado (lo renombró otro equipo y llegó por sync, o
+  // acabó de confirmarlo el servidor): el input adopta el valor autoritativo en
+  // lugar de quedarse enseñando uno viejo.
+  if (adoptado !== cat.name) {
+    setAdoptado(cat.name);
+    setName(cat.name);
+  }
+
+  const ocupado = guardando || borrando;
+
+  async function guardarNombre() {
+    const limpio = name.trim();
+    if (ocupado || limpio === cat.name) {
+      setName(cat.name);
+      return;
+    }
+    if (!limpio) {
+      setName(cat.name);
+      toast.error("La categoría necesita un nombre");
+      return;
+    }
+    // Red de seguridad: el input ya está deshabilitado, pero si el acceso se cayó
+    // mientras se escribía, el cambio se revierte en lugar de quedarse sólo aquí.
+    if (edicion.bloqueado) {
+      setName(cat.name);
+      toast.error("No se pudo renombrar la categoría", { description: edicion.motivo });
+      return;
+    }
+    setGuardando(true);
+    try {
+      await renameCategory(cat.id, limpio);
+      toast.success("Categoría actualizada");
+    } catch (err) {
+      setName(cat.name);
+      toast.error("No se pudo renombrar la categoría", { description: categoryErrorText(err) });
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  async function eliminar() {
+    if (ocupado || borrado.bloqueado) return;
+    // El servidor también lo niega (409 `has_history`): esto evita el viaje.
+    if (productos > 0) {
+      toast.error("La categoría tiene productos");
+      return;
+    }
+    setBorrando(true);
+    try {
+      await deleteCategory(cat.id);
+      toast.success("Categoría eliminada");
+    } catch (err) {
+      toast.error("No se pudo eliminar la categoría", { description: categoryErrorText(err) });
+    } finally {
+      setBorrando(false);
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-3 px-4 py-2.5">
+      <input
+        value={name}
+        maxLength={80}
+        disabled={edicion.bloqueado || ocupado}
+        title={edicion.motivo}
+        aria-label={`Nombre de la categoría ${cat.name}`}
+        onChange={(e) => setName(e.target.value)}
+        onBlur={() => void guardarNombre()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") setName(cat.name);
+        }}
+        className="flex-1 bg-transparent text-sm outline-none disabled:cursor-not-allowed disabled:opacity-60"
+      />
+      <span className="num text-xs text-muted-foreground">{productos} productos</span>
+      <Btn
+        size="sm"
+        variant="ghost"
+        disabled={borrado.bloqueado}
+        cargando={borrando}
+        title={borrado.motivo}
+        onClick={() => void eliminar()}
+      >
+        Eliminar
+      </Btn>
+    </div>
   );
 }
 

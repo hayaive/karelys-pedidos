@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { runMigrations } from "./migrations";
 import { buildSeed, uid } from "./seed";
+import { isPairedWithBackend } from "./sync/session";
 import type { AppState } from "./types";
 
 const KEY = "karelys.db.v1";
@@ -48,12 +49,19 @@ export function loadFromDisk() {
         state.rates = [...seed.rates, ...state.rates.filter((r) => ![412.5, 485.3, 415.2].includes(r.value))];
         persist();
       }
-      // Carga clientes de ejemplo que aún no existan (por cédula)
-      const have = new Set(state.customers.map((c) => c.cedula));
-      const missing = seed.customers.filter((c) => !have.has(c.cedula));
-      if (missing.length) {
-        state.customers = [...missing, ...state.customers];
-        persist();
+      // Clientes de ejemplo: sólo mientras este equipo no tenga backend.
+      //
+      // En un equipo emparejado la lista de clientes es del servidor (ver
+      // `applyBootstrap`, que la reemplaza), y reinyectar aquí la semilla en cada
+      // arranque resucitaría en el siguiente inicio exactamente lo que el bootstrap
+      // acaba de podar: 20 clientes de prueba que el backend no tiene.
+      if (!isPairedWithBackend()) {
+        const have = new Set(state.customers.map((c) => c.cedula));
+        const missing = seed.customers.filter((c) => !have.has(c.cedula));
+        if (missing.length) {
+          state.customers = [...missing, ...state.customers];
+          persist();
+        }
       }
     } else {
       persist();

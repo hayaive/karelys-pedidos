@@ -6,16 +6,22 @@
  * Todo pasa por `mutate()`, el mismo camino que usa la UI, **una sola vez por
  * ciclo**: un `mutate` por entidad dispararía un render por colección.
  *
- * Las tres reglas que gobiernan este archivo:
+ * Las cuatro reglas que gobiernan este archivo:
  *
- *  1. **Upsert por id, nunca reemplazo a ciegas.** Los agregados llegan completos
- *     y reaplicarlos es inocuo, pero una colección local puede contener registros
- *     que el servidor todavía no conoce (están en la cola). Borrarlos sería perder
- *     dinero.
- *  2. **Lo que tiene una mutación pendiente no se pisa.** Mientras la cola no
- *     confirme, la copia local es la que el cajero está viendo y tocando.
- *  3. **Los borrados sólo llegan por `deletions`** (tombstones), nunca por
- *     ausencia en una lista.
+ *  1. **El delta funde, nunca poda.** `GET /sync` es incremental: una colección que
+ *     no viene, o que viene con tres filas, no dice nada de las demás. Ahí los
+ *     borrados llegan **sólo** por `deletions` (tombstones).
+ *  2. **El bootstrap es autoritativo en lo que manda completo.** `GET /bootstrap`
+ *     no es un delta: para el catálogo, los clientes, los usuarios y los roles es
+ *     *la* foto del servidor, así que una ausencia ahí sí significa "no existe" y
+ *     la colección local se **reemplaza** (ver `applyBootstrap`).
+ *  3. **Lo que tiene una mutación pendiente no se pisa ni se borra.** Mientras la
+ *     cola no confirme, la copia local es la que el cajero está viendo y tocando, y
+ *     el servidor todavía no puede saber que existe.
+ *  4. **Las colecciones acotadas por ventana nunca se reemplazan.** Pedidos,
+ *     ventas, movimientos, cierres, tasas y bitácora llegan recortados a propósito
+ *     (`BOOTSTRAP_WINDOW_DAYS` y compañía): reemplazarlas borraría historial local
+ *     legítimo que el servidor sí tiene pero no mandó.
  */
 
 import { getState, mutate } from "../store";
@@ -80,6 +86,59 @@ function upsert<T extends WithId>(
 
 /** El servidor manda el agregado completo: por defecto gana tal cual. */
 const remoteWins = <T>(_local: T, remote: T): T => remote;
+
+/**
+ * Reemplazo autoritativo. Para las colecciones que `GET /bootstrap` manda
+ * **completas** (catálogo, clientes, usuarios, roles), `remote` no es un lote de
+ * novedades: es la colección entera tal como existe en el servidor. Lo que no está
+ * ahí, no está.
+ *
+ * Es lo contrario de `upsert` y la diferencia importa: fundir la foto completa
+ * dejaba para siempre los datos de ejemplo de la semilla —los 20 clientes de
+ * prueba— en cuanto el equipo se conectaba a un backend real con la lista vacía. No
+ * había tombstone que los quitara porque el servidor nunca supo que existían: nadie
+ * los borró allí, nunca estuvieron.
+ *
+ * Lo que **sí** sobrevive a la poda:
+ *
+ *  · lo que el servidor mandó (se funde con `merge`, para no perder lo que es local
+ *    por naturaleza: la contraseña del usuario, el stock estimado del producto);
+ *  · lo que tiene una **mutación pendiente** en la cola (`pendingIds`): se creó o se
+ *    editó aquí y todavía no ha subido, así que su ausencia en la foto no es una
+ *    decisión del servidor sino el retraso de la cola. Borrarlo sería tirar el
+ *    trabajo de un turno sin red;
+ *  · lo que `protect` marque (el usuario de la sesión y su rol: ver `applyBootstrap`).
+ *
+ * El orden pasa a ser el del servidor —que es el que tiene criterio: clientes por
+ * nombre, productos por código— y los locales conservados van al final.
+ */
+function replaceAuthoritative<T extends WithId>(
+  local: T[],
+  remote: T[] | undefined,
+  pendingIds: Set<string>,
+  merge: (local: T, remote: T) => T = remoteWins,
+  protect?: (local: T) => boolean,
+): T[] {
+  // `undefined` es "el servidor no mandó esta colección" (una respuesta más vieja,
+  // un campo que aún no existe) y **no** es lo mismo que `[]`, que es "está vacía".
+  // Confundirlos aquí borraría el catálogo entero por un campo que falta.
+  if (!remote) return local;
+
+  const mineById = new Map(local.map((x) => [x.id, x]));
+  const incoming = new Set(remote.map((r) => r.id));
+
+  const next = remote.map((r) => {
+    const mine = mineById.get(r.id);
+    return mine ? merge(mine, r) : r;
+  });
+
+  for (const mine of local) {
+    if (incoming.has(mine.id)) continue;
+    if (pendingIds.has(mine.id) || protect?.(mine)) next.push(mine);
+  }
+
+  return next;
+}
 
 const byCreatedDesc = (a: { createdAt: string }, b: { createdAt: string }) =>
   b.createdAt.localeCompare(a.createdAt);
@@ -176,8 +235,26 @@ function mergeOrder(local: Order, remote: Order, pending: boolean): Order {
   };
 }
 
-/** Venta: insert-only. Se adopta la del servidor, que ya trae la anulación si la hubo. */
-const mergeSale = (_local: Sale, remote: Sale): Sale => remote;
+/**
+ * Venta: insert-only. Se adopta la del servidor, que ya trae la anulación si la hubo.
+ *
+ * La excepción es la anulación que todavía está en la cola (`sale.void`): el servidor
+ * aún manda la venta como `completada` y adoptarla tal cual la revive en pantalla —
+ * el cajero ve otra vez como buena una venta que acaba de anular, y el cierre del día
+ * la cuenta. Anular es monótono y terminal, igual que `cancelado` en un pedido, así
+ * que mientras la cola no confirme manda la anulación local.
+ */
+function mergeSale(local: Sale, remote: Sale, pending: boolean): Sale {
+  if (!pending || local.status !== "anulada" || remote.status === "anulada") return remote;
+
+  return {
+    ...remote,
+    status: local.status,
+    voidedAt: local.voidedAt ?? remote.voidedAt,
+    voidReason: local.voidReason ?? remote.voidReason,
+    voidedByUserId: local.voidedByUserId ?? remote.voidedByUserId,
+  };
+}
 
 /* ── Delta ────────────────────────────────────────────── */
 
@@ -219,7 +296,12 @@ export function applyDelta(changes: DeltaChanges, deletions: DeltaDeletion[] = [
     // hay que meterlos en su pedido, que puede no venir en esta misma página.
     if (changes.orderDeposits?.length) applyDeposits(s, changes.orderDeposits);
 
-    s.sales = upsert<Sale>(s.sales, changes.sales, mergeSale, byCreatedDesc);
+    s.sales = upsert<Sale>(
+      s.sales,
+      changes.sales,
+      (l, r) => mergeSale(l, r, pending.has(l.id)),
+      byCreatedDesc,
+    );
     s.movements = upsert<InventoryMovement>(
       s.movements,
       changes.movements,
@@ -305,34 +387,50 @@ function applyDeletions(s: AppState, deletions: DeltaDeletion[]) {
 /* ── Bootstrap ────────────────────────────────────────── */
 
 /**
- * Hidrata la caché con el estado inicial.
+ * Hidrata la caché con el estado inicial. **Dos regímenes, y la diferencia es el
+ * corazón de esta función.**
  *
- * **Sólo funde, nunca borra.** Podría parecer que el catálogo y los clientes, que
- * el servidor manda completos, permiten deducir un borrado por ausencia —"si el
- * servidor no lo manda, ya no existe"— y ésa fue la primera versión de esto. Es
- * una mala idea, y se vio en cuanto se probó contra un backend real recién
- * sembrado:
+ * ### Lo que el servidor manda completo: se reemplaza
  *
- *  1. **Rompe la integridad referencial.** Ese backend tenía una categoría y
- *     ningún producto: la poda se llevó las otras seis categorías locales y dejó
- *     decenas de productos apuntando a categorías que ya no estaban. Los productos
- *     no se podaron —esa colección venía vacía— así que el resultado no fue un
- *     catálogo limpio sino uno a medio romper.
- *  2. **Duplica un mecanismo que el contrato ya resuelve.** Los borrados viajan
- *     como tombstones (`deletions`, §4.4) precisamente para que el cliente no
- *     tenga que adivinarlos por ausencia. Deducirlos además por omisión es tener
- *     dos fuentes de verdad para lo mismo, y una de ellas equivocada.
+ * Catálogo (categorías, tipos de precio, grupos de precio, productos, formas de
+ * pago), clientes, usuarios y roles no están acotados por ninguna ventana: el
+ * bootstrap los trae enteros, así que es la foto autoritativa y una ausencia
+ * significa "ya no existe". Se aplican con `replaceAuthoritative`.
  *
- * Consecuencia aceptada: los datos de ejemplo de la semilla (los 20 clientes de
- * prueba) siguen ahí después de conectar el equipo a un backend real, y un
- * dispositivo tan viejo que perdió los tombstones (`cursor_too_old`) puede
- * conservar algo que el servidor ya borró hasta que esa entidad vuelva a cambiar.
- * Las dos cosas se resuelven con una acción deliberada —importar el catálogo,
- * reiniciar la caché— y no con un borrado silencioso: conservar un registro de más
- * es mucho más barato que perder uno por descuido.
+ * Antes se fundían con `upsert` y el resultado era que **nada se podía quitar nunca
+ * por esta vía**: un equipo recién instalado arranca con la semilla local (20
+ * clientes de ejemplo), iniciaba sesión contra un backend real con `customers: []`
+ * y se quedaba con los 20 para siempre. No había tombstone que los borrara porque el
+ * servidor nunca supo de ellos. Lo mismo valía para productos y categorías de
+ * ejemplo que no existen en el backend.
  *
- * Ventas, pedidos, movimientos, cierres, tasas y bitácora llegan además
- * **recortados a una ventana**: una caché no es el libro mayor.
+ * El riesgo de podar por ausencia es real y por eso está acotado:
+ *
+ *  · **Lo pendiente no se toca.** Lo que tiene una mutación en la cola sobrevive:
+ *    el cliente que el cajero acaba de crear sin red no está en la foto porque
+ *    todavía no ha subido, no porque el servidor lo haya borrado.
+ *  · **El usuario de la sesión y su rol no se tocan.** Un bootstrap a mitad de turno
+ *    (cursor caducado) no debe dejar la sesión sin usuario y echar al cajero a la
+ *    pantalla de inicio.
+ *  · **Una colección ausente no poda nada** (ver `replaceAuthoritative`): sólo una
+ *    lista presente y vacía significa "vacía".
+ *
+ * Integridad referencial: igual que con los tombstones (`applyDeletions`), un
+ * registro local que se conserva puede quedar apuntando a algo que el servidor no
+ * mandó. La aplicación ya lo tolera —`resolvePrices` cae a los precios propios del
+ * producto cuando su grupo no está, y las listas resuelven el nombre del cliente
+ * sobre la marcha— y es el precio de tener una sola fuente de verdad.
+ *
+ * ### Lo que llega recortado: se funde
+ *
+ * Pedidos, abonos, ventas, movimientos, tasas, cierres y bitácora vienen acotados
+ * (`BOOTSTRAP_WINDOW_DAYS`, `BOOTSTRAP_CLOSURES_DAYS`, `BOOTSTRAP_RATES_DAYS`, las
+ * últimas 200 entradas de bitácora). Reemplazarlos borraría el historial local que
+ * está fuera de la ventana —legítimo, y que el servidor sí tiene pero no manda— así
+ * que se fusionan por id y sus borrados siguen llegando por tombstone. Los que
+ * tienen una mutación pendiente conservan además su copia local: `mergeOrder` para
+ * el pedido en edición, `mergeSale` para la anulación que aún no subió y
+ * `unionDeposits` para el abono cobrado sin red.
  */
 export function applyBootstrap(b: BootstrapResponse) {
   const pending = pendingEntityIds();
@@ -341,14 +439,37 @@ export function applyBootstrap(b: BootstrapResponse) {
   mutate((s) => {
     s.company = mergeCompany(s.company, b.company);
 
-    s.categories = upsert<Category>(s.categories, b.categories, remoteWins);
-    s.priceTypes = upsert<PriceType>(s.priceTypes, b.priceTypes, remoteWins);
-    s.priceGroups = upsert<PriceGroup>(s.priceGroups, b.priceGroups, remoteWins);
-    s.products = upsert<Product>(s.products, b.products, (l, r) => mergeProduct(l, r, keepStock));
-    s.paymentMethods = upsert<PaymentMethod>(s.paymentMethods, b.paymentMethods, remoteWins);
-    s.roles = upsert<Role>(s.roles, b.roles, remoteWins);
-    s.users = upsert<User>(s.users, b.users, mergeUser);
-    s.customers = upsert<Customer>(s.customers, b.customers, remoteWins);
+    // El usuario de la sesión y su rol se protegen de la poda: sin ellos en la caché
+    // `useSession()` se queda sin permisos y la aplicación rebota al login.
+    const sessionUserId = s.sessionUserId;
+    const sessionRoleId = s.users.find((u) => u.id === sessionUserId)?.roleId;
+
+    s.categories = replaceAuthoritative<Category>(s.categories, b.categories, pending);
+    s.priceTypes = replaceAuthoritative<PriceType>(s.priceTypes, b.priceTypes, pending);
+    s.priceGroups = replaceAuthoritative<PriceGroup>(s.priceGroups, b.priceGroups, pending);
+    s.products = replaceAuthoritative<Product>(s.products, b.products, pending, (l, r) =>
+      mergeProduct(l, r, keepStock),
+    );
+    s.paymentMethods = replaceAuthoritative<PaymentMethod>(
+      s.paymentMethods,
+      b.paymentMethods,
+      pending,
+    );
+    s.roles = replaceAuthoritative<Role>(
+      s.roles,
+      b.roles,
+      pending,
+      remoteWins,
+      (r) => r.id === sessionRoleId,
+    );
+    s.users = replaceAuthoritative<User>(
+      s.users,
+      b.users,
+      pending,
+      mergeUser,
+      (u) => u.id === sessionUserId,
+    );
+    s.customers = replaceAuthoritative<Customer>(s.customers, b.customers, pending);
 
     s.orders = upsert<Order>(
       s.orders,
@@ -357,7 +478,12 @@ export function applyBootstrap(b: BootstrapResponse) {
       byCreatedDesc,
     );
     if (b.orderDeposits?.length) applyDeposits(s, b.orderDeposits);
-    s.sales = upsert<Sale>(s.sales, b.sales, mergeSale, byCreatedDesc);
+    s.sales = upsert<Sale>(
+      s.sales,
+      b.sales,
+      (l, r) => mergeSale(l, r, pending.has(l.id)),
+      byCreatedDesc,
+    );
     s.movements = upsert<InventoryMovement>(s.movements, b.movements, remoteWins, byCreatedDesc);
     s.rates = upsert<ExchangeRate>(s.rates, b.rates, remoteWins, byCreatedDesc);
     s.closures = upsert<DailyClosure>(s.closures, b.closures, remoteWins, (a, x) =>

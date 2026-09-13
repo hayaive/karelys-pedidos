@@ -20,9 +20,15 @@ import {
 } from "@/components/ui-kit";
 import { logAudit, mutate, useAppState } from "@/lib/store";
 import { addMovement, coldCakePriceGroups, priceOf } from "@/lib/business";
+import type { PriceFixTarget } from "@/lib/catalog";
 import { attachDefaultPriceGroup, applyPriceAlertFix, setPriceGroupAmount } from "@/lib/catalog";
 import { priceAlerts } from "@/lib/pricing";
-import { queueProductCreate, queueProductUpdate } from "@/lib/sync/mutations";
+import {
+  queuePriceGroupPriceSet,
+  queueProductCreate,
+  queueProductPriceSet,
+  queueProductUpdate,
+} from "@/lib/sync/mutations";
 import { dt, num, usd } from "@/lib/format";
 import { uid } from "@/lib/seed";
 import type { PriceAlert, Product } from "@/lib/types";
@@ -330,14 +336,31 @@ function PriceAlertAviso({ alert, canFix }: { alert: PriceAlert; canFix: boolean
             size="sm"
             variant="amber"
             onClick={() => {
+              let fixed: PriceFixTarget[] = [];
               mutate((st) => {
-                applyPriceAlertFix(st, alert);
+                fixed = applyPriceAlertFix(st, alert);
                 logAudit("precio_alerta_corregida", "price_group", alert.priceGroupId ?? "", {
                   priceTypeId: alert.priceTypeId,
                   from: alert.currentUsd,
                   to: alert.suggestedUsd,
                 });
               });
+
+              /* Encolar **después** del `mutate` y celda por celda: el precio
+                 corregido sólo en local desaparece en el siguiente `/bootstrap`,
+                 que reemplaza el catálogo completo. Es el mismo agujero que
+                 tapó `product.create/update`, y aquí es plata directa: este
+                 botón es el que sube las tortas frías a su precio objetivo.
+
+                 Se encola lo que `applyPriceAlertFix` dice que cambió, no lo que
+                 la alerta pedía: si el grupo ya no existe no cambió nada y no
+                 hay nada que mandar. */
+              for (const t of fixed) {
+                if (t.scope === "group")
+                  queuePriceGroupPriceSet(t.priceGroupId, t.priceTypeId, t.amount);
+                else queueProductPriceSet(t.productId, t.priceTypeId, t.amount);
+              }
+
               toast.success(`Precio actualizado a ${usd(alert.suggestedUsd)}`);
             }}
           >
@@ -397,14 +420,31 @@ function PreciosAgrupados({ canEdit }: { canEdit: boolean }) {
                         onBlur={(e) => {
                           const v = parseFloat(e.target.value.replace(",", ".")) || 0;
                           if (v === amount) return;
+                          // El contrato exige un precio ≥ 0 (`@Min(0)` en
+                          // `SetPriceDto`) y un negativo sería un rechazo
+                          // **permanente**: la mutación sale de la cola y la
+                          // corrección se queda sólo en este navegador. Se para
+                          // aquí, antes de tocar el estado.
+                          if (v < 0) return toast.error("El precio no puede ser negativo");
+
+                          let queued = false;
                           mutate((st) => {
-                            setPriceGroupAmount(st, group.id, pt.id, v);
+                            queued = setPriceGroupAmount(st, group.id, pt.id, v);
                             logAudit("precio_grupo_editado", "price_group", group.id, {
                               priceTypeId: pt.id,
                               from: amount,
                               to: v,
                             });
                           });
+
+                          /* Una mutación por la celda `(grupo, tipo de precio)`
+                             que se acaba de tocar, y sólo por esa: cada `Input`
+                             de esta rejilla es una celda independiente y el
+                             servidor resuelve el conflicto por celda, así que
+                             mandar las demás pisaría con valores viejos la
+                             corrección que otra caja hizo en paralelo. */
+                          if (queued) queuePriceGroupPriceSet(group.id, pt.id, v);
+
                           toast.success(`Precio de "${group.name}" actualizado a ${usd(v)}`);
                         }}
                       />

@@ -29,6 +29,7 @@ import {
 import type {
   AppState,
   Category,
+  ID,
   PriceAlert,
   PriceGroup,
   PriceRule,
@@ -424,25 +425,56 @@ export function setPriceGroupAmount(
 }
 
 /**
+ * Celda de precio que `applyPriceAlertFix` cambió de verdad.
+ *
+ * Existe para que quien llama pueda **encolar la mutación de sincronización que
+ * le toca a cada celda** sin volver a deducir por qué rama pasó la corrección.
+ * La celda `(grupo | producto, tipo de precio)` es la unidad de conflicto del
+ * backend, así que es también la unidad que se reporta: nada de "algo cambió".
+ */
+export type PriceFixTarget =
+  | { scope: "group"; priceGroupId: ID; priceTypeId: ID; amount: number }
+  | { scope: "product"; productId: ID; priceTypeId: ID; amount: number };
+
+/**
  * Aplica la corrección que pide una `PriceAlert`: sube el precio del tipo de
  * precio alertado a `alert.suggestedUsd`. Si la alerta viene de un grupo
  * (caso normal: el genérico "Tortas Frías"), corrige sólo ese grupo. Si por
  * alguna razón el producto alertado no pertenece a ningún grupo (categoría de
  * tortas frías sin agrupar, caso residual), corrige el precio propio de cada
  * producto afectado para no dejar la alerta sin acción posible.
+ *
+ * Devuelve las celdas que cambiaron —lista vacía si no cambió ninguna— porque el
+ * precio corregido sólo en local se pierde en el siguiente `/bootstrap`, que
+ * reemplaza el catálogo completo. Quien llama **tiene que** encolarlas.
  */
-export function applyPriceAlertFix(s: AppState, alert: PriceAlert): boolean {
+export function applyPriceAlertFix(s: AppState, alert: PriceAlert): PriceFixTarget[] {
   if (alert.priceGroupId) {
-    return setPriceGroupAmount(s, alert.priceGroupId, alert.priceTypeId, alert.suggestedUsd);
+    const ok = setPriceGroupAmount(s, alert.priceGroupId, alert.priceTypeId, alert.suggestedUsd);
+    return ok
+      ? [
+          {
+            scope: "group",
+            priceGroupId: alert.priceGroupId,
+            priceTypeId: alert.priceTypeId,
+            amount: alert.suggestedUsd,
+          },
+        ]
+      : [];
   }
-  let touched = false;
+  const touched: PriceFixTarget[] = [];
   for (const id of alert.productIds) {
     const p = s.products.find((x) => x.id === id);
     if (!p) continue;
     const existing = p.prices.find((x) => x.priceTypeId === alert.priceTypeId);
     if (existing) existing.amount = alert.suggestedUsd;
     else p.prices.push({ priceTypeId: alert.priceTypeId, amount: alert.suggestedUsd });
-    touched = true;
+    touched.push({
+      scope: "product",
+      productId: p.id,
+      priceTypeId: alert.priceTypeId,
+      amount: alert.suggestedUsd,
+    });
   }
   return touched;
 }

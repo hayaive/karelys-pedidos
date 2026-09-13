@@ -24,15 +24,16 @@
  *  · implementadas de punta a punta: `sale.create`, `sale.void`, `order.create`,
  *    `order.update`, `order.status`, `order.delete`, `orderDeposit.create`,
  *    `orderDeposit.void`, `movement.create`, `customer.create`, `customer.update`,
- *    `product.create`, `product.update`, `rate.create`.
+ *    `product.create`, `product.update`, `productPrice.set`,
+ *    `priceGroupPrice.set`, `rate.create`.
  *  · pendientes (el motor ya las soporta; sólo falta la llamada en su mutador):
- *    `productPrice.set`, `priceGroupPrice.set`, `priceGroup.create`,
- *    `priceGroup.update`, `closure.create`, `audit.append`.
+ *    `priceGroup.create`, `priceGroup.update`, `closure.create`, `audit.append`.
  *
  * `productPrice.set` no hace falta para el formulario de producto: su parche de
  * `product.update` ya lleva `prices` completo, y la granularidad por celda sólo
- * gana cuando se edita **un** precio suelto (la pestaña de precios agrupados, que
- * es `priceGroupPrice.set`, otra operación).
+ * gana cuando se edita **un** precio suelto: la pestaña de precios agrupados
+ * (`priceGroupPrice.set`) y la corrección de una alerta de precio bajo sobre un
+ * producto sin grupo (`productPrice.set`).
  */
 
 import type {
@@ -331,6 +332,44 @@ export function queueProductUpdate(productId: ID, patch: Partial<Product>) {
   if (patch.comboItems?.length) payload.comboItems = patch.comboItems.map(wireComboItem);
 
   enqueueMutation("product.update", payload);
+}
+
+/* ── Precios ──────────────────────────────────────────── */
+
+/**
+ * `priceGroupPrice.set`: fija **una** celda `(grupo, tipo de precio)`.
+ *
+ * La celda es la unidad de conflicto: el servidor resuelve con LWW por celda, así
+ * que dos cajas que corrigen a la vez el precio Mayor y el precio Detal del mismo
+ * grupo **sobreviven las dos**. Por eso se encola una mutación por cada celda que
+ * de verdad cambió y no un `priceGroup.update` con la lista `prices` completa:
+ * esa lista se reemplaza en bloque en el servidor, de modo que mandarla haría que
+ * el último en sincronizar pisara la corrección del otro con el valor viejo que
+ * tenía en su copia local.
+ *
+ * Es la operación de la pantalla "Precios agrupados" —donde se corrige la alerta
+ * de precio bajo de las tortas frías— y cambiar aquí el precio cambia el de todos
+ * los productos del grupo a la vez, que es justo lo que el negocio espera.
+ *
+ * `amount` tiene que ser ≥ 0 (`@Min(0)` en `SetPriceDto`): un negativo es un
+ * rechazo **permanente**, y un rechazo permanente saca la mutación de la cola y
+ * deja el precio corregido sólo en este navegador. Quien llama valida antes.
+ */
+export function queuePriceGroupPriceSet(priceGroupId: ID, priceTypeId: ID, amount: number) {
+  enqueueMutation("priceGroupPrice.set", { priceGroupId, priceTypeId, amount });
+}
+
+/**
+ * `productPrice.set`: la misma idea que la anterior pero sobre el precio **propio**
+ * de un producto, celda `(producto, tipo de precio)`.
+ *
+ * Sólo la usa la corrección de una alerta de precio bajo cuyo producto no
+ * pertenece a ningún grupo (caso residual: un producto de la familia de tortas
+ * frías sin agrupar, ver `applyPriceAlertFix`). El formulario de producto no la
+ * necesita: su `product.update` ya manda `prices` completo.
+ */
+export function queueProductPriceSet(productId: ID, priceTypeId: ID, amount: number) {
+  enqueueMutation("productPrice.set", { productId, priceTypeId, amount });
 }
 
 /* ── Inventario ───────────────────────────────────────── */

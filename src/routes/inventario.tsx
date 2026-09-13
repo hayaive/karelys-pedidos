@@ -136,7 +136,9 @@ function Inventario() {
         <>
           <div className="mb-3 flex flex-col gap-2 sm:flex-row">
             <div className="relative flex-1">
-              <IcoBuscar />
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-texto-3">
+                <IcoBuscar />
+              </span>
               <Input
                 className="pl-9"
                 placeholder="Buscar producto o código"

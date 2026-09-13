@@ -31,6 +31,24 @@ import type { Sale } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { shortcutsOf, useShortcuts } from "@/lib/shortcuts";
 
+/**
+ * Bloqueo de stock cero (requisito explícito del dueño del negocio): un
+ * producto sin stock no se puede agregar al carrito por ningún camino.
+ *
+ * Excepción deliberada: los combos (`isCombo`) usan su campo `stock` como un
+ * valor placeholder que el motor de negocio nunca decrementa al vender (ver
+ * `applyMovement`/`createSale` en `lib/business.ts`, que saltan explícitamente
+ * los combos al mover inventario) ni repone; el seed los crea con `stock: 999`
+ * como "sin límite". No es inventario real, así que bloquearlos por llegar a 0
+ * (incluyendo el reseteo masivo a 0 que se acaba de hacer) impediría vender
+ * combos sin ninguna razón de negocio. `bsOnly` NO se excluye: son productos
+ * con stock real igual que cualquier otro (el ejemplo "Ponquesitos
+ * decorados" además es combo, por eso queda exento, pero no por ser bsOnly).
+ */
+function isOutOfStock(p: Product) {
+  return !p.isCombo && p.stock <= 0;
+}
+
 export function POS({
   initialItems,
   initialCustomerId,
@@ -118,6 +136,11 @@ export function POS({
   });
 
   function add(p: Product, customization?: string) {
+    if (isOutOfStock(p)) {
+      toast.error(`Sin stock disponible: ${p.name}`);
+      setCustomizeFor(null);
+      return;
+    }
     if (p.allowCustomization && customization === undefined && !customizeFor) {
       setCustomizeFor(p);
       return;
@@ -210,11 +233,22 @@ export function POS({
 
   const LineRows = (
     <div className="divide-y divide-border">
-      {items.map((i, k) => (
+      {items.map((i, k) => {
+        // El producto pudo agotarse (stock 0) después de agregarse a este
+        // carrito, por ejemplo por una venta sincronizada desde otro
+        // dispositivo mientras el pedido seguía abierto. No retiramos la
+        // línea sola (el usuario decide si la completa o la quita), pero
+        // avisamos y evitamos que suba más la cantidad de algo sin stock.
+        const lineProduct = s.products.find((pr) => pr.id === i.productId);
+        const lineOutOfStock = lineProduct ? isOutOfStock(lineProduct) : false;
+        return (
         <div key={k} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-3">
           {/* El nombre ocupa toda la fila en teléfono para que el resto no se apriete. */}
           <div className="min-w-0 basis-full sm:basis-auto sm:flex-1">
-            <p className="truncate text-sm font-medium">{i.name}</p>
+            <p className="flex min-w-0 items-center gap-2 text-sm font-medium">
+              <span className="min-w-0 truncate">{i.name}</span>
+              {lineOutOfStock && <Badge tone="red">Se agotó</Badge>}
+            </p>
             {i.customization && <p className="text-xs text-sol-70">{i.customization}</p>}
             <p className="num text-xs text-muted-foreground">
               {money.fmtBsAmount(unitBs(i, money))}
@@ -246,7 +280,14 @@ export function POS({
                 icono
                 size="sm"
                 className="size-11 sm:size-[1.95rem]"
-                onClick={() => setQty(k, i.qty + 1)}
+                disabled={lineOutOfStock}
+                onClick={() => {
+                  if (lineOutOfStock) {
+                    toast.error(`Sin stock disponible: ${i.name}`);
+                    return;
+                  }
+                  setQty(k, i.qty + 1);
+                }}
                 aria-label={`Agregar una unidad de ${i.name}`}
               >
                 <IcoMas />
@@ -272,7 +313,8 @@ export function POS({
             </div>
           </div>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 
@@ -435,17 +477,33 @@ export function POS({
             <div className="mt-3 max-h-80 divide-y divide-border overflow-y-auto rounded-md border border-border">
               {products.slice(0, 40).map((p) => {
                 const price = p.bsOnly ? null : priceOf(s, p, priceTypeId);
-                const low = !p.isCombo && p.stock <= p.minStock;
+                const outOfStock = isOutOfStock(p);
+                const low = !p.isCombo && !outOfStock && p.stock <= p.minStock;
                 return (
                   <button
                     key={p.id}
-                    onClick={() => add(p)}
-                    className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-sol-vela"
+                    type="button"
+                    disabled={outOfStock}
+                    aria-disabled={outOfStock}
+                    onClick={() => {
+                      if (outOfStock) {
+                        toast.error(`Sin stock disponible: ${p.name}`);
+                        return;
+                      }
+                      add(p);
+                    }}
+                    className={cn(
+                      "flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors",
+                      outOfStock
+                        ? "cursor-not-allowed opacity-45 grayscale-[60%]"
+                        : "hover:bg-sol-vela",
+                    )}
                   >
                     <span className="num w-16 shrink-0 text-xs text-muted-foreground">
                       {p.code}
                     </span>
                     <span className="min-w-0 flex-1 truncate text-sm font-medium">{p.name}</span>
+                    {outOfStock && <Badge tone="red">Sin stock</Badge>}
                     {low && <Badge tone="red">{p.stock}</Badge>}
                     <span className="w-24 shrink-0 text-right">
                       <span className="num block text-sm font-semibold text-sol-70">
@@ -457,7 +515,7 @@ export function POS({
                         </span>
                       )}
                     </span>
-                    <IcoMas />
+                    {!outOfStock && <IcoMas />}
                   </button>
                 );
               })}

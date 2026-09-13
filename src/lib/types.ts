@@ -35,11 +35,21 @@ export const ALL_PERMISSIONS: { key: Permission; label: string }[] = [
   { key: "manage_exchange_rates", label: "Gestionar tasas" },
 ];
 
+/**
+ * Versión de la fila según el servidor (el `rev` del backend, ARCHITECTURE.md §4.2).
+ *
+ * Hace de ETag y de `baseRev` en el bloqueo optimista. Es **opcional** porque un
+ * registro creado sin red todavía no tiene ninguna: lo recibe cuando el servidor
+ * confirma su mutación. Nada de la UI depende de él; sólo el motor de sync.
+ */
+export type Rev = number;
+
 export interface Role {
   id: ID;
   name: string;
   permissions: Permission[];
   system?: boolean;
+  rev?: Rev;
 }
 
 export interface User {
@@ -47,22 +57,36 @@ export interface User {
   username: string;
   fullName: string;
   email?: string;
-  password: string;
+  /**
+   * Contraseña en claro del modelo local heredado. **No existe en el backend**
+   * (que guarda un argon2id que nunca sale del servidor), así que los usuarios
+   * que llegan de `/bootstrap` no la traen. Sólo la usa el login local de
+   * respaldo; ver `lib/auth`.
+   */
+  password?: string;
   roleId: ID;
   active: boolean;
   createdAt: string;
+  system?: boolean;
+  deactivatedAt?: string;
+  lastLoginAt?: string;
+  rev?: Rev;
 }
 
 export interface Category {
   id: ID;
   name: string;
   active: boolean;
+  rev?: Rev;
 }
 
 export interface PriceType {
   id: ID;
   name: string;
   isDefault: boolean;
+  /** Orden en la UI. Lo manda el backend; el frontend sólo lo conserva. */
+  position?: number;
+  rev?: Rev;
 }
 
 export interface ProductPrice {
@@ -107,6 +131,7 @@ export interface PriceGroup {
   rule?: PriceRule;
   active: boolean;
   createdAt: string;
+  rev?: Rev;
 }
 
 export interface Product {
@@ -141,6 +166,7 @@ export interface Product {
   allowCustomization?: boolean;
   customizationPrice?: number;
   createdAt: string;
+  rev?: Rev;
 }
 
 /** Alerta de precio derivada (no se persiste: se calcula al vuelo). */
@@ -179,6 +205,16 @@ export interface InventoryMovement {
   note?: string;
   userId: ID;
   createdAt: string;
+  /**
+   * Efecto con signo y existencia resultante. Los calcula el **servidor** (un
+   * `ajuste` se resuelve en el momento de aplicarlo, no de capturarlo), así que
+   * sólo están presentes en los movimientos que ya sincronizaron.
+   */
+  delta?: number;
+  stockAfter?: number;
+  saleId?: ID;
+  orderId?: ID;
+  rev?: Rev;
 }
 
 export interface Customer {
@@ -189,6 +225,7 @@ export interface Customer {
   address?: string;
   active: boolean;
   createdAt: string;
+  rev?: Rev;
 }
 
 export type RateSource = "BCV_USD" | "BCV_EUR" | "BINANCE";
@@ -201,6 +238,7 @@ export interface ExchangeRate {
   automatic: boolean;
   userId: ID | null;
   createdAt: string;
+  rev?: Rev;
 }
 
 export interface PaymentMethod {
@@ -209,6 +247,8 @@ export interface PaymentMethod {
   currency: "USD" | "BS";
   requiresReference: boolean;
   active: boolean;
+  position?: number;
+  rev?: Rev;
 }
 
 export interface Payment {
@@ -249,6 +289,11 @@ export interface OrderDeposit extends Payment {
   voided?: boolean;
   voidedAt?: string;
   voidReason?: string;
+  /** Pedido al que pertenece. Lo manda el backend, que trata el abono como raíz propia. */
+  orderId?: ID;
+  /** Día contable (`America/Caracas`) que puso el servidor. */
+  businessDate?: string;
+  rev?: Rev;
 }
 
 export interface LineItem {
@@ -291,6 +336,20 @@ export interface Sale {
   status: SaleStatus;
   orderId?: ID;
   note?: string;
+  /**
+   * Número provisional con el que se imprimió el ticket si el servidor tuvo que
+   * renumerar la venta (dos cajas offline generaron el mismo `V-000xx`).
+   */
+  clientNumber?: string;
+  /** Día contable que puso el servidor. El cierre autoritativo usa éste. */
+  businessDate?: string;
+  receivedAt?: string;
+  voidedAt?: string;
+  voidReason?: string;
+  voidedByUserId?: ID;
+  /** La venta se registró sin conexión: su ticket pudo renumerarse. */
+  createdOffline?: boolean;
+  rev?: Rev;
 }
 
 export type OrderStatus = "pendiente" | "preparacion" | "listo" | "procesado" | "cancelado";
@@ -314,6 +373,14 @@ export interface Order {
    * cuando se editan las líneas del pedido.
    */
   deposits?: OrderDeposit[];
+  /** Número provisional, si el servidor tuvo que renumerar el pedido. */
+  clientNumber?: string;
+  businessDate?: string;
+  receivedAt?: string;
+  canceledAt?: string;
+  cancelReason?: string;
+  createdOffline?: boolean;
+  rev?: Rev;
 }
 
 export type OrderPaymentStatus = "sin_abono" | "abonado" | "pagado";
@@ -345,6 +412,9 @@ export interface DailyClosure {
   differenceUsd: number;
   note?: string;
   closedAt: string;
+  /** Abonos recibidos el día del cierre, según el servidor. */
+  depositUsd?: number;
+  rev?: Rev;
 }
 
 export interface AuditLog {
@@ -356,6 +426,7 @@ export interface AuditLog {
   entityId: string;
   data?: string;
   createdAt: string;
+  rev?: Rev;
 }
 
 export interface CompanySettings {
@@ -383,6 +454,11 @@ export interface CompanySettings {
   /** Horas tras las que la tasa BCV se considera vencida y hay que refrescarla. */
   rateMaxAgeHours?: number;
   shortcuts?: Record<string, string>;
+  /** Zona del día contable. La fija el servidor (`America/Caracas`). */
+  timezone?: string;
+  /** Versión de esquema del **backend**, distinta de `AppState.version`. */
+  schemaVersion?: number;
+  rev?: Rev;
 }
 
 export interface AppState {

@@ -9,11 +9,25 @@ import {
 } from "./orders";
 import { itemsTotals, priceBandCheck, rateSnapshot } from "./pricing";
 import { getState, logAudit, mutate } from "./store";
-import { uid } from "./seed";
+import { newId } from "./ids";
+import {
+  queueCustomerCreate,
+  queueCustomerUpdate,
+  queueMovementCreate,
+  queueOrderCreate,
+  queueOrderDelete,
+  queueOrderStatus,
+  queueOrderUpdate,
+  queueRateCreate,
+  queueSaleCreate,
+  queueSaleVoid,
+} from "./sync/mutations";
 import type {
   AppState,
   Customer,
+  ExchangeRate,
   ID,
+  InventoryMovement,
   LineItem,
   Order,
   OrderStatus,
@@ -69,18 +83,22 @@ export {
  * que permite auditar a qué tasa se cobró cada venta y cada abono.
  */
 export function setRate(source: RateSource, value: number, automatic = false) {
+  let published: ExchangeRate | undefined;
   mutate((s) => {
-    s.rates.unshift({
-      id: uid(),
+    published = {
+      id: newId(),
       source,
       currency: source === "BCV_EUR" ? "EUR" : "USD",
       value,
       automatic,
       userId: s.sessionUserId,
       createdAt: new Date().toISOString(),
-    });
+    };
+    s.rates.unshift(published);
     logAudit(automatic ? "tasa_automatica" : "tasa_manual", "exchange_rate", source, { value });
   });
+  // Sólo las manuales: las automáticas las publica el servidor por su cuenta.
+  if (published) queueRateCreate(published);
 }
 
 /** Intenta obtener tasas oficiales; si falla, el admin las edita a mano. */
@@ -104,6 +122,13 @@ export async function fetchRatesFromApi(): Promise<{ ok: boolean; message: strin
 
 /* ── Inventario ───────────────────────────────────────── */
 
+/**
+ * Movimiento de inventario capturado por una persona (la pantalla de inventario).
+ *
+ * Éste **sí** se encola: es un asiento de kardex por sí mismo. Los movimientos que
+ * genera una venta o su anulación no se encolan, porque `sale.create` y `sale.void`
+ * ya mueven el inventario en el servidor y hacerlo dos veces descuadraría el stock.
+ */
 export function addMovement(
   productId: ID,
   qty: number,
@@ -111,9 +136,18 @@ export function addMovement(
   reason: string,
   note?: string,
 ) {
-  mutate((s) => applyMovement(s, productId, qty, type, reason, note));
+  let created: InventoryMovement | undefined;
+  mutate((s) => {
+    created = applyMovement(s, productId, qty, type, reason, note);
+  });
+  if (created) queueMovementCreate(created);
 }
 
+/**
+ * Aplica el movimiento al estado y devuelve el asiento creado (o `undefined` si el
+ * producto no existe). **No encola**: quien lo llame decide si ese movimiento es un
+ * hecho propio o el efecto de una venta.
+ */
 export function applyMovement(
   s: AppState,
   productId: ID,
@@ -121,14 +155,14 @@ export function applyMovement(
   type: "entrada" | "salida" | "ajuste",
   reason: string,
   note?: string,
-) {
+): InventoryMovement | undefined {
   const p = s.products.find((x) => x.id === productId);
-  if (!p) return;
+  if (!p) return undefined;
   if (type === "entrada") p.stock += qty;
   else if (type === "salida") p.stock -= qty;
   else p.stock = qty;
-  s.movements.unshift({
-    id: uid(),
+  const movement: InventoryMovement = {
+    id: newId(),
     productId,
     qty,
     type,
@@ -136,8 +170,10 @@ export function applyMovement(
     note,
     userId: s.sessionUserId ?? "system",
     createdAt: new Date().toISOString(),
-  });
+  };
+  s.movements.unshift(movement);
   logAudit("movimiento_inventario", "product", productId, { qty, type, reason });
+  return movement;
 }
 
 /* ── Ventas ───────────────────────────────────────────── */
@@ -202,7 +238,7 @@ export function createSale(input: {
     const number = st.company.salePrefix + String(st.company.saleNext).padStart(5, "0");
     st.company.saleNext += 1;
     sale = {
-      id: uid(),
+      id: newId(),
       number,
       createdAt: new Date().toISOString(),
       customerId: input.customerId,
@@ -238,10 +274,16 @@ export function createSale(input: {
       depositUsd: depositPayments.reduce((a, p) => a + p.usdEquivalent, 0) || undefined,
     });
   });
+
+  // Se encola con los pagos que cobró el cajero. Los abonos del pedido los añade
+  // el servidor desde el pedido, para que no se puedan consumir dos veces.
+  if (sale) queueSaleCreate(sale, input.payments);
+
   return { ok: true, sale };
 }
 
 export function cancelSale(saleId: ID, reason: string) {
+  let voided = false;
   mutate((s) => {
     const sale = s.sales.find((x) => x.id === saleId);
     if (!sale || sale.status === "anulada") return;
@@ -251,7 +293,11 @@ export function cancelSale(saleId: ID, reason: string) {
       if (p && !p.isCombo) applyMovement(s, it.productId, it.qty, "entrada", "Anulación de venta", sale.number);
     }
     logAudit("venta_anulada", "sale", saleId, { reason, number: sale.number });
+    voided = true;
   });
+  // La devolución de stock la hace el servidor al anular: los movimientos de
+  // arriba son sólo la copia local y no se encolan.
+  if (voided) queueSaleVoid(saleId, reason);
 }
 
 /* ── Pedidos ──────────────────────────────────────────── */
@@ -286,7 +332,7 @@ export function createOrder(input: {
     const number = st.company.orderPrefix + String(st.company.orderNext).padStart(5, "0");
     st.company.orderNext += 1;
     order = {
-      id: uid(),
+      id: newId(),
       number,
       createdAt: new Date().toISOString(),
       customerId: input.customerId,
@@ -305,6 +351,10 @@ export function createOrder(input: {
       abonoUsd: built?.ok ? built.deposit.usdEquivalent : undefined,
     });
   });
+
+  // El abono adelantado viaja **dentro** del pedido: es un solo acto.
+  if (order) queueOrderCreate(order);
+
   return { ok: true, order: order! };
 }
 
@@ -314,17 +364,39 @@ export function createOrder(input: {
  * `overpaidUsd` (excedente a devolver) en lugar de dejar un saldo negativo.
  */
 export function updateOrder(id: ID, patch: Partial<Order>) {
+  const edited = applyOrderPatch(id, patch);
+  // Va con `baseRev`: si otro equipo ya lo cambió, el servidor responde `conflict`
+  // con su versión en lugar de dejar que una edición pise la otra.
+  if (edited) queueOrderUpdate(edited, patch);
+}
+
+/**
+ * Cambia el estado del pedido. Viaja como `order.status`, que es **monótono**: una
+ * transición que retrocede porque este equipo iba atrasado no se aplica, se audita,
+ * y el servidor responde con su estado para que lo adoptemos.
+ */
+export function setOrderStatus(id: ID, status: OrderStatus) {
+  const edited = applyOrderPatch(id, { status });
+  if (edited) queueOrderStatus(edited, status);
+}
+
+/**
+ * El parche local, compartido por `updateOrder` y `setOrderStatus`. Devuelve el
+ * pedido **antes** del parche cuando se aplicó algo, porque es su `rev` el que vale
+ * como `baseRev` (la copia local no tiene una versión nueva hasta que el servidor
+ * confirme).
+ */
+function applyOrderPatch(id: ID, patch: Partial<Order>): Order | undefined {
+  let base: Order | undefined;
   mutate((s) => {
     const o = s.orders.find((x) => x.id === id);
     if (!o || o.status === "procesado") return;
+    base = { ...o };
     Object.assign(o, patch);
     o.totalUsd = o.items.reduce((a, i) => a + i.subtotalUsd, 0);
     logAudit("pedido_editado", "order", id, patch.status ? { status: patch.status } : undefined);
   });
-}
-
-export function setOrderStatus(id: ID, status: OrderStatus) {
-  updateOrder(id, { status });
+  return base;
 }
 
 /**
@@ -346,6 +418,7 @@ export function deleteOrder(id: ID): { ok: boolean; error?: string } {
     st.orders = st.orders.filter((o) => o.id !== id || o.status === "procesado");
     logAudit("pedido_eliminado", "order", id);
   });
+  queueOrderDelete(id);
   return { ok: true };
 }
 
@@ -353,6 +426,7 @@ export function deleteOrder(id: ID): { ok: boolean; error?: string } {
 
 export function upsertCustomer(c: Partial<Customer> & { cedula: string; name: string }) {
   let saved: Customer | undefined;
+  let created = false;
   mutate((s) => {
     if (c.id) {
       const ex = s.customers.find((x) => x.id === c.id);
@@ -363,7 +437,7 @@ export function upsertCustomer(c: Partial<Customer> & { cedula: string; name: st
       }
     } else {
       saved = {
-        id: uid(),
+        id: newId(),
         cedula: c.cedula,
         name: c.name,
         phone: c.phone,
@@ -372,9 +446,19 @@ export function upsertCustomer(c: Partial<Customer> & { cedula: string; name: st
         createdAt: new Date().toISOString(),
       };
       s.customers.unshift(saved);
+      created = true;
       logAudit("cliente_creado", "customer", saved.id);
     }
   });
+
+  if (saved) {
+    // Un alta con una cédula que el servidor ya conoce se **fusiona** allí y
+    // devuelve su id: el motor reapunta los pedidos y ventas que colgaban del
+    // id local.
+    if (created) queueCustomerCreate(saved);
+    else queueCustomerUpdate(saved, c);
+  }
+
   return saved!;
 }
 

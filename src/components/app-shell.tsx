@@ -22,7 +22,9 @@ import { logout, useSession } from "@/lib/auth";
 import { ThemeToggle } from "./theme";
 import { longDate } from "@/lib/format";
 import { useShortcuts } from "@/lib/shortcuts";
+import { startSyncEngine } from "@/lib/sync/engine";
 import type { Permission } from "@/lib/types";
+import { SyncIndicator } from "./sync-indicator";
 import { Card } from "./ui-kit";
 
 export const NAV: { to: string; label: string; icon: Icono; perm: Permission | null }[] = [
@@ -88,6 +90,19 @@ export function AppShell({ children, requires }: { children: ReactNode; requires
   useEffect(() => {
     if (hydrated && !user) navigate({ to: "/login" });
   }, [hydrated, user, navigate]);
+
+  /**
+   * El motor de sync vive mientras haya una pantalla de la aplicación montada: el
+   * ciclo de un minuto, el disparo al recuperar la conexión y la puesta al día al
+   * volver a la pestaña. No se arranca en el login porque ahí todavía no hay sesión.
+   *
+   * Sólo en el cliente: `loadFromDisk` y localStorage no existen en el render del
+   * servidor.
+   */
+  useEffect(() => {
+    if (!hydrated) return;
+    return startSyncEngine();
+  }, [hydrated]);
 
   useEffect(() => setHoja(false), [pathname]);
 
@@ -190,6 +205,7 @@ export function AppShell({ children, requires }: { children: ReactNode; requires
             </div>
             <div className="hidden text-etiqueta text-[#C4B7A4] lg:block">{longDate()}</div>
             <div className="ml-auto flex shrink-0 items-center gap-2">
+              <SyncIndicator />
               <ThemeToggle />
             </div>
           </div>

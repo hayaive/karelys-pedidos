@@ -11,9 +11,10 @@
  * vigente: es dinero que aún no se ha cobrado.
  */
 
+import { newId } from "./ids";
 import { bcvRate } from "./pricing";
-import { uid } from "./seed";
 import { getState, logAudit, mutate } from "./store";
+import { queueDepositCreate, queueDepositVoid } from "./sync/mutations";
 import type {
   AppState,
   ID,
@@ -136,7 +137,7 @@ export function buildDeposit(
   return {
     ok: true,
     deposit: {
-      id: uid(),
+      id: newId(),
       createdAt: at,
       at,
       methodId: method.id,
@@ -174,10 +175,12 @@ export function addOrderDeposit(
       error: `El abono ($${built.deposit.usdEquivalent.toFixed(2)}) supera el saldo pendiente ($${balance.balanceUsd.toFixed(2)})`,
     };
 
+  let stored = false;
   mutate((st) => {
     const o = st.orders.find((x) => x.id === orderId);
     if (!o) return;
     o.deposits = [...(o.deposits ?? []), built.deposit];
+    stored = true;
     logAudit("abono_registrado", "order", orderId, {
       number: o.number,
       amount: built.deposit.amount,
@@ -185,6 +188,8 @@ export function addOrderDeposit(
       usd: built.deposit.usdEquivalent,
     });
   });
+  // Los abonos **siempre se fusionan** en el servidor: es dinero que ya entró.
+  if (stored) queueDepositCreate(orderId, built.deposit);
   return { ok: true, deposit: built.deposit };
 }
 
@@ -210,14 +215,17 @@ export function voidOrderDeposit(
   if (!deposit) return { ok: false, error: "El abono no existe" };
   if (deposit.voided) return { ok: false, error: "El abono ya estaba anulado" };
 
+  let annulled = false;
   mutate((st) => {
     const d = st.orders.find((x) => x.id === orderId)?.deposits?.find((x) => x.id === depositId);
     if (!d) return;
     d.voided = true;
     d.voidedAt = new Date().toISOString();
     d.voidReason = reason;
+    annulled = true;
     logAudit("abono_anulado", "order", orderId, { depositId, reason, usd: d.usdEquivalent });
   });
+  if (annulled) queueDepositVoid(depositId, reason);
   return { ok: true };
 }
 

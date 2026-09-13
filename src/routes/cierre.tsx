@@ -6,9 +6,10 @@ import { AppShell, PageHead } from "@/components/app-shell";
 import { Badge, Btn, Card, CardHead, Empty, Field, Input, Textarea } from "@/components/ui-kit";
 import { logAudit, mutate, useAppState } from "@/lib/store";
 import { closureDraft } from "@/lib/business";
-import { bs, dayKey, dt, usd } from "@/lib/format";
+import { dayKey, dt, usd } from "@/lib/format";
 import { uid } from "@/lib/seed";
 import { useSession } from "@/lib/auth";
+import { useMoney } from "@/hooks/use-money";
 
 export const Route = createFileRoute("/cierre")({
   ssr: false,
@@ -35,6 +36,7 @@ export const Route = createFileRoute("/cierre")({
 
 function Cierre() {
   const s = useAppState();
+  const money = useMoney();
   const { user, can } = useSession();
   const [day, setDay] = useState(dayKey());
   const draft = useMemo(() => closureDraft(s, day), [s, day]);
@@ -73,30 +75,30 @@ function Cierre() {
         }
       />
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2">
         <Card className="p-4">
           <p className="text-xs text-muted-foreground">Ventas</p>
           <p className="num mt-1 text-2xl font-semibold">{draft.sales.length}</p>
         </Card>
         <Card className="p-4">
-          <p className="text-xs text-muted-foreground">Total USD</p>
-          <p className="num mt-1 text-2xl font-semibold">{usd(draft.totalUsd)}</p>
-        </Card>
-        <Card className="p-4">
-          <p className="text-xs text-muted-foreground">Total Bs</p>
-          <p className="num mt-1 text-2xl font-semibold">{bs(draft.totalBs)}</p>
+          <p className="text-xs text-muted-foreground">Total del día</p>
+          <p className="num mt-1 text-2xl font-semibold">{money.fmtBs(draft.totalUsd)}</p>
+          <p className="num text-xs text-muted-foreground">{usd(draft.totalUsd)}</p>
         </Card>
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-[1.2fr_1fr]">
         <Card>
-          <CardHead title="Desglose por método" sub="Equivalente en USD" />
+          <CardHead title="Desglose por método" sub="Equivalente en bolívares" />
           <div className="divide-y divide-border">
             {draft.byMethod.map((m) => (
               <div key={m.methodId} className="flex items-center gap-3 px-4 py-2.5">
                 <span className="flex-1 text-sm">{m.methodName}</span>
-                <span className="num w-24 text-right text-sm text-muted-foreground">
-                  {usd(m.expected)}
+                <span className="w-24 text-right">
+                  <span className="num block text-sm">{money.fmtBs(m.expected)}</span>
+                  <span className="num block text-[11px] text-muted-foreground">
+                    {usd(m.expected)}
+                  </span>
                 </span>
                 <Input
                   className="num w-28 text-right"
@@ -109,9 +111,14 @@ function Cierre() {
           </div>
           <div className="flex items-center justify-between border-t border-border px-4 py-3">
             <span className="text-sm font-medium">Esperado / Recibido / Diferencia</span>
-            <span className="num text-sm">
-              {usd(draft.expectedUsd)} · {usd(recTotal)} ·{" "}
-              <span className={diff === 0 ? "text-verde" : "text-rojo"}>{usd(diff)}</span>
+            <span className="text-right">
+              <span className="num block text-sm">
+                {money.fmtBs(draft.expectedUsd)} · {money.fmtBs(recTotal)} ·{" "}
+                <span className={diff === 0 ? "text-verde" : "text-rojo"}>{money.fmtBs(diff)}</span>
+              </span>
+              <span className="num block text-[11px] text-muted-foreground">
+                {usd(draft.expectedUsd)} · {usd(recTotal)} · {usd(diff)}
+              </span>
             </span>
           </div>
         </Card>
@@ -125,7 +132,12 @@ function Cierre() {
                 <p className="num text-sm text-muted-foreground">
                   Cerrado por {closed.userName} · {dt(closed.closedAt)}
                 </p>
-                <p className="num text-sm">Diferencia registrada: {usd(closed.differenceUsd)}</p>
+                <p className="num text-sm">
+                  Diferencia registrada: {money.fmtBs(closed.differenceUsd)}{" "}
+                  <span className="text-xs text-muted-foreground">
+                    ({usd(closed.differenceUsd)})
+                  </span>
+                </p>
                 {closed.note && <p className="text-sm text-muted-foreground">{closed.note}</p>}
               </>
             ) : (
@@ -188,9 +200,21 @@ function Cierre() {
               <div key={c.id} className="flex flex-wrap items-center gap-3 px-4 py-2.5 text-sm">
                 <span className="num flex-1">{c.date}</span>
                 <span className="num">{c.salesCount} ventas</span>
-                <span className="num">{usd(c.totalUsd)}</span>
-                <span className={"num " + (c.differenceUsd === 0 ? "text-verde" : "text-rojo")}>
-                  {usd(c.differenceUsd)}
+                <span className="text-right">
+                  <span className="num block">{money.fmtBs(c.totalUsd)}</span>
+                  <span className="num block text-[11px] text-muted-foreground">
+                    {usd(c.totalUsd)}
+                  </span>
+                </span>
+                <span className="text-right">
+                  <span
+                    className={"num block " + (c.differenceUsd === 0 ? "text-verde" : "text-rojo")}
+                  >
+                    {money.fmtBs(c.differenceUsd)}
+                  </span>
+                  <span className="num block text-[11px] text-muted-foreground">
+                    {usd(c.differenceUsd)}
+                  </span>
                 </span>
                 <span className="text-xs text-muted-foreground">{c.userName}</span>
               </div>

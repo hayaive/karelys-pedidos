@@ -24,13 +24,19 @@
  *  · implementadas de punta a punta: `sale.create`, `sale.void`, `order.create`,
  *    `order.update`, `order.status`, `order.delete`, `orderDeposit.create`,
  *    `orderDeposit.void`, `movement.create`, `customer.create`, `customer.update`,
- *    `rate.create`.
+ *    `product.create`, `product.update`, `rate.create`.
  *  · pendientes (el motor ya las soporta; sólo falta la llamada en su mutador):
- *    `product.create`, `product.update`, `productPrice.set`, `priceGroupPrice.set`,
- *    `priceGroup.create`, `priceGroup.update`, `closure.create`, `audit.append`.
+ *    `productPrice.set`, `priceGroupPrice.set`, `priceGroup.create`,
+ *    `priceGroup.update`, `closure.create`, `audit.append`.
+ *
+ * `productPrice.set` no hace falta para el formulario de producto: su parche de
+ * `product.update` ya lleva `prices` completo, y la granularidad por celda sólo
+ * gana cuando se edita **un** precio suelto (la pestaña de precios agrupados, que
+ * es `priceGroupPrice.set`, otra operación).
  */
 
 import type {
+  ComboItem,
   Customer,
   ExchangeRate,
   ID,
@@ -40,6 +46,8 @@ import type {
   OrderDeposit,
   OrderStatus,
   Payment,
+  Product,
+  ProductPrice,
   Sale,
 } from "../types";
 import { enqueueMutation } from "./queue";
@@ -203,6 +211,126 @@ export function queueDepositCreate(orderId: ID, deposit: OrderDeposit) {
 /** `orderDeposit.void`. Idempotente, y anular gana sobre no anular. */
 export function queueDepositVoid(depositId: ID, reason: string) {
   enqueueMutation("orderDeposit.void", { depositId, reason });
+}
+
+/* ── Catálogo ─────────────────────────────────────────── */
+
+/**
+ * Tope de `imageUrl` en el contrato (`@MaxLength(2000)` en `CreateProductDto`).
+ *
+ * El formulario de inventario guarda la foto como **data URL** en base64, que pasa
+ * de sobra ese tope. Mandarla haría que el servidor rechazara el alta entera con
+ * `validation_failed`, y un rechazo permanente saca la mutación de la cola: el
+ * producto se quedaría sólo en este navegador y el siguiente `/bootstrap` —que
+ * reemplaza el catálogo completo— lo borraría. Perder la foto es infinitamente más
+ * barato que perder el producto, así que la imagen se omite y el resto del alta
+ * viaja.
+ *
+ * Para que la foto llegue de verdad hace falta subirla a algún sitio y mandar su
+ * URL; hoy el backend no tiene endpoint de subida (ver el informe de esta tarea).
+ */
+const IMAGE_URL_MAX = 2000;
+
+function wireImageUrl(imageUrl?: string): string | undefined {
+  if (!imageUrl) return undefined;
+  if (imageUrl.length <= IMAGE_URL_MAX) return imageUrl;
+  console.warn(
+    "[sync] la imagen del producto no viaja al servidor: excede los " +
+      `${IMAGE_URL_MAX} caracteres que admite el contrato (es una data URL)`,
+  );
+  return undefined;
+}
+
+/** Precio propio tal como lo espera `PriceInputDto`. */
+function wirePrice(p: ProductPrice) {
+  return { priceTypeId: p.priceTypeId, amount: p.amount };
+}
+
+/** Línea de combo tal como la espera `ComboItemInputDto`. */
+function wireComboItem(i: ComboItem) {
+  return { description: i.description, qty: i.qty, productId: i.productId };
+}
+
+/**
+ * `product.create`.
+ *
+ * **`stock` no se manda**: no es escribible por ningún cliente. El servidor crea
+ * todo producto con existencia 0 y la única forma de moverla es un movimiento de
+ * inventario, así que el stock inicial del formulario viaja aparte como un
+ * `movement.create` de tipo `ajuste` (ver `inventario.tsx`). El orden de la cola es
+ * lo que lo hace posible: se aplica en secuencia, y el producto existe en el
+ * servidor antes del movimiento que le fija la existencia.
+ *
+ * Un `code` repetido tampoco es un error: dos dispositivos sin red pueden generar
+ * el mismo, así que el servidor **recodifica** y responde `renumbered`; el motor
+ * adopta el código definitivo y avisa.
+ */
+export function queueProductCreate(product: Product) {
+  enqueueMutation(
+    "product.create",
+    {
+      id: product.id,
+      code: product.code,
+      name: product.name,
+      description: product.description,
+      categoryId: product.categoryId,
+      imageUrl: wireImageUrl(product.imageUrl),
+      minStock: product.minStock,
+      active: product.active,
+      bsOnly: product.bsOnly,
+      // Un producto que se vende sólo en Bs **necesita** su precio en Bs: sin él
+      // el servidor rechaza el alta (el CHECK `products_bs_only_needs_price_ck`).
+      // El formulario muestra 0 cuando nadie tocó el campo, así que 0 es lo que
+      // corresponde mandar, no "nada".
+      bsPrice: product.bsOnly ? (product.bsPrice ?? 0) : product.bsPrice,
+      priceGroupId: product.priceGroupId,
+      isCombo: product.isCombo,
+      allowCustomization: product.allowCustomization,
+      customizationPrice: product.customizationPrice,
+      prices: product.prices?.length ? product.prices.map(wirePrice) : undefined,
+      comboItems: product.comboItems?.length ? product.comboItems.map(wireComboItem) : undefined,
+    },
+    { at: product.createdAt },
+  );
+}
+
+/**
+ * `product.update`. Parche con **LWW por campo**: sólo compiten los campos que dos
+ * dispositivos tocaron a la vez, y para eso el último en escribir es la respuesta
+ * acordada. Por eso **no** va `baseRev` (el servidor aplica el parche sin comparar
+ * `rev`, igual que en `customer.update`) y por eso viaja como parche y no como
+ * foto completa.
+ *
+ * `stock` no viaja nunca, por lo mismo que en el alta.
+ *
+ * `prices` y `comboItems` se **reemplazan en bloque** cuando vienen, así que una
+ * lista vacía no se manda: el formulario de producto no edita combos, de modo que
+ * un `[]` significaría "este formulario no sabe de combos" y borraría las líneas
+ * del combo en el servidor.
+ */
+export function queueProductUpdate(productId: ID, patch: Partial<Product>) {
+  const payload: Record<string, unknown> = { productId };
+
+  if (patch.code !== undefined) payload.code = patch.code;
+  if (patch.name !== undefined) payload.name = patch.name;
+  if (patch.description !== undefined) payload.description = patch.description;
+  if (patch.categoryId !== undefined) payload.categoryId = patch.categoryId;
+  if (patch.imageUrl !== undefined) payload.imageUrl = wireImageUrl(patch.imageUrl);
+  if (patch.minStock !== undefined) payload.minStock = patch.minStock;
+  if (patch.active !== undefined) payload.active = patch.active;
+  if (patch.bsOnly !== undefined) payload.bsOnly = patch.bsOnly;
+  // Igual que en el alta: si el producto pasa a venderse sólo en Bs, su precio en
+  // Bs tiene que ir en el **mismo** parche o el servidor lo rechaza.
+  if (patch.bsPrice !== undefined) payload.bsPrice = patch.bsPrice;
+  else if (patch.bsOnly) payload.bsPrice = 0;
+  if (patch.priceGroupId !== undefined) payload.priceGroupId = patch.priceGroupId;
+  if (patch.isCombo !== undefined) payload.isCombo = patch.isCombo;
+  if (patch.allowCustomization !== undefined) payload.allowCustomization = patch.allowCustomization;
+  if (patch.customizationPrice !== undefined) payload.customizationPrice = patch.customizationPrice;
+  if (patch.prices?.length) payload.prices = patch.prices.map(wirePrice);
+  if (patch.comboItems?.length) payload.comboItems = patch.comboItems.map(wireComboItem);
+
+  enqueueMutation("product.update", payload);
 }
 
 /* ── Inventario ───────────────────────────────────────── */

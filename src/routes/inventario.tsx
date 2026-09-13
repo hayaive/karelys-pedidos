@@ -22,6 +22,7 @@ import { logAudit, mutate, useAppState } from "@/lib/store";
 import { addMovement, coldCakePriceGroups, priceOf } from "@/lib/business";
 import { attachDefaultPriceGroup, applyPriceAlertFix, setPriceGroupAmount } from "@/lib/catalog";
 import { priceAlerts } from "@/lib/pricing";
+import { queueProductCreate, queueProductUpdate } from "@/lib/sync/mutations";
 import { dt, num, usd } from "@/lib/format";
 import { uid } from "@/lib/seed";
 import type { PriceAlert, Product } from "@/lib/types";
@@ -553,13 +554,27 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
           onClick={() => {
             if (!f.name?.trim() || !f.code?.trim())
               return toast.error("Código y nombre son obligatorios");
+            // El contrato exige cantidades no negativas. Se comprueba aquí porque
+            // un rechazo del servidor es **permanente**: la mutación sale de la
+            // cola, el producto se queda sólo en este navegador y el siguiente
+            // bootstrap —que reemplaza el catálogo completo— se lo lleva.
+            if ((f.stock ?? 0) < 0 || (f.minStock ?? 0) < 0)
+              return toast.error("El stock y el stock mínimo no pueden ser negativos");
+
+            const desiredStock = f.stock ?? 0;
+            let created: Product | undefined;
+            let edited: Product | undefined;
+            let stockBefore = desiredStock;
+
             mutate((st) => {
               if (f.id) {
                 const ex = st.products.find((x) => x.id === f.id);
                 if (ex) {
+                  stockBefore = ex.stock;
                   Object.assign(ex, f);
                   // Si pasó a una familia con precio general, hereda el grupo.
                   attachDefaultPriceGroup(st, ex);
+                  edited = ex;
                 }
                 logAudit("producto_editado", "product", f.id);
               } else {
@@ -580,9 +595,50 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
                 };
                 attachDefaultPriceGroup(st, p);
                 st.products.unshift(p);
+                created = p;
                 logAudit("producto_creado", "product", p.id);
               }
             });
+
+            /* Encolar va **después** del `mutate`, con el producto ya en su forma
+               final (el grupo de precio que acaba de heredar incluido), y en este
+               orden: la cola se aplica en secuencia en el servidor, así que el
+               producto existe allí antes del movimiento que le fija la existencia.
+
+               El `stock` no viaja en `product.create` ni en `product.update` —el
+               servidor es la única fuente de verdad de la existencia y sólo la
+               mueve un movimiento de inventario—, así que el número del formulario
+               se asienta como `ajuste`, que es la misma pieza que usa el formulario
+               de movimientos de esta pantalla. Sin esto el producto se crearía en
+               el servidor con stock 0 y el número local desaparecería en el
+               siguiente ciclo.
+
+               `ajuste` y no `entrada` a propósito: fija la existencia final en vez
+               de sumar, así que es idempotente y no depende de en qué estado esté
+               el servidor. Como `applyMovement` también lo aplica en local, un
+               `entrada` duplicaría aquí el stock que ya tiene el producto. */
+            if (created) {
+              queueProductCreate(created);
+              if (desiredStock > 0)
+                addMovement(
+                  created.id,
+                  desiredStock,
+                  "ajuste",
+                  "Stock inicial",
+                  "Existencia declarada al crear el producto",
+                );
+            } else if (edited) {
+              queueProductUpdate(edited.id, edited);
+              if (desiredStock !== stockBefore)
+                addMovement(
+                  edited.id,
+                  desiredStock,
+                  "ajuste",
+                  "Ajuste manual",
+                  "Stock corregido desde el formulario del producto",
+                );
+            }
+
             toast.success("Producto guardado");
             onClose();
           }}

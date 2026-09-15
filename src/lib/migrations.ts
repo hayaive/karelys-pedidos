@@ -20,7 +20,7 @@ import {
 import type { AppState } from "./types";
 
 /** Versión de esquema que entiende este código. */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 interface Migration {
   to: number;
@@ -90,9 +90,42 @@ function toV3(s: AppState): string[] {
   return ensureColdCakeFamily(s);
 }
 
+/**
+ * v3 → v4
+ *  · nuevo método de pago "Punto de venta" (terminal de tarjeta), para que las
+ *    instalaciones ya sembradas antes de que existiera lo reciban sin
+ *    perder los métodos que el negocio ya haya configurado o editado.
+ *
+ * Igual que con `ensureColdCakeFamily`, esto se busca primero por id y, si no
+ * está, por nombre normalizado: una instalación pudo haberlo creado a mano
+ * desde Ajustes → Métodos de pago antes de esta migración, y duplicarlo sería
+ * peor que no migrar nada.
+ */
+function toV4(s: AppState): string[] {
+  const id = "pm-pos";
+  const name = "Punto de venta";
+  const norm = (x: string) => x.trim().toLowerCase();
+
+  if (!Array.isArray(s.paymentMethods)) s.paymentMethods = [];
+  const exists = s.paymentMethods.some(
+    (m) => m.id === id || norm(m.name) === norm(name),
+  );
+  if (exists) return [];
+
+  s.paymentMethods.push({
+    id,
+    name,
+    currency: "BS",
+    requiresReference: true,
+    active: true,
+  });
+  return [`método de pago "${name}" agregado`];
+}
+
 const MIGRATIONS: Migration[] = [
   { to: 2, name: "price-groups-and-order-deposits", up: toV2 },
   { to: 3, name: "cold-cake-single-product", up: toV3 },
+  { to: 4, name: "punto-de-venta-payment-method", up: toV4 },
 ];
 
 export interface MigrationResult {

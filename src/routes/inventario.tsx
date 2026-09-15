@@ -545,7 +545,16 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
                   <Input
                     className="num"
                     inputMode="decimal"
-                    value={String(price(pt.id))}
+                    // Input NO controlado a propósito (`defaultValue`, no `value`):
+                    // si se ata `value` al número ya parseado, cada tecla dispara un
+                    // re-render que reformatea `f.prices` de vuelta a texto y le pisa
+                    // al usuario lo que acaba de teclear (el punto decimal, un cero
+                    // final) antes de que pueda seguir escribiendo — con montos en
+                    // USD eso hacía prácticamente imposible escribir centavos y podía
+                    // terminar guardando un número muy distinto al tecleado. `f.prices`
+                    // sigue siendo la fuente de verdad para "Guardar": `onChange` la
+                    // sigue actualizando, sólo dejó de retroalimentar el campo.
+                    defaultValue={String(price(pt.id))}
                     onChange={(e) =>
                       setPrice(pt.id, parseFloat(e.target.value.replace(",", ".")) || 0)
                     }
@@ -569,7 +578,9 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
         <Field label="Precio en Bs">
           <Input
             className="num"
-            value={String(f.bsPrice ?? 0)}
+            // Mismo motivo que el precio en USD de arriba: no controlado para no
+            // pisarle al usuario el punto decimal mientras escribe.
+            defaultValue={String(f.bsPrice ?? 0)}
             onChange={(e) =>
               setF({ ...f, bsPrice: parseFloat(e.target.value.replace(",", ".")) || 0 })
             }

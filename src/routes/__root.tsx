@@ -11,6 +11,7 @@ import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { Toaster } from "@/components/ui/sonner";
+import { useAutoRefreshRates } from "@/hooks/use-auto-refresh-rates";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { registerServiceWorker } from "../lib/register-service-worker";
 
@@ -138,6 +139,10 @@ function RootComponent() {
   useEffect(() => {
     registerServiceWorker();
   }, []);
+
+  // Al entrar a la app con sesión iniciada, refresca la tasa BCV/paralelo/EUR
+  // si ya está vencida (ver hooks/use-auto-refresh-rates). No toca app-shell.tsx.
+  useAutoRefreshRates();
 
   return (
     <QueryClientProvider client={queryClient}>

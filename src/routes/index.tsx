@@ -17,7 +17,7 @@ import { useSession } from "@/lib/auth";
 import { Badge, BarraProg, Btn, Card, CardHead, Cifra, Empty } from "@/components/ui-kit";
 import { useAppState } from "@/lib/store";
 import { bs, dayKey, num, time, usd } from "@/lib/format";
-import { currentRate } from "@/lib/business";
+import { currentRate, itemsTotals } from "@/lib/business";
 import { useMoney } from "@/hooks/use-money";
 import { cn } from "@/lib/utils";
 
@@ -195,27 +195,34 @@ function Dashboard() {
             </div>
           ) : (
             <div className="divide-y divide-border">
-              {pending.slice(0, 6).map((o) => (
-                <div
-                  key={o.id}
-                  className="flex items-center gap-3 px-4 py-[0.6rem] transition-colors duration-[140ms] hover:bg-sup-2"
-                >
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-etiqueta font-[550]">
-                      <span className="num text-texto-2">{o.number}</span> · {o.customerName}
-                    </p>
-                    <p className="num text-[0.79rem] text-texto-2">
-                      {time(o.createdAt)} · {usd(o.totalUsd)}
-                    </p>
+              {pending.slice(0, 6).map((o) => {
+                // No `o.totalUsd`: excluye a propósito las líneas `bsOnly` (torta
+                // fría), así que un pedido compuesto sólo por ellas se veía
+                // siempre en "$0.00" aquí. `itemsTotals` sí las convierte con la
+                // tasa vigente (mismo patrón que usa el ticket).
+                const { totalBs: pendingTotalBs } = itemsTotals(o.items, money);
+                return (
+                  <div
+                    key={o.id}
+                    className="flex items-center gap-3 px-4 py-[0.6rem] transition-colors duration-[140ms] hover:bg-sup-2"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-etiqueta font-[550]">
+                        <span className="num text-texto-2">{o.number}</span> · {o.customerName}
+                      </p>
+                      <p className="num text-[0.79rem] text-texto-2">
+                        {time(o.createdAt)} · {money.fmtBsAmount(pendingTotalBs)}
+                      </p>
+                    </div>
+                    <Badge tone={o.status === "listo" ? "green" : "amber"}>{o.status}</Badge>
+                    {can("process_orders") && (
+                      <Btn size="sm" onClick={() => navigate({ to: "/pedidos" })}>
+                        Procesar
+                      </Btn>
+                    )}
                   </div>
-                  <Badge tone={o.status === "listo" ? "green" : "amber"}>{o.status}</Badge>
-                  {can("process_orders") && (
-                    <Btn size="sm" onClick={() => navigate({ to: "/pedidos" })}>
-                      Procesar
-                    </Btn>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </Card>

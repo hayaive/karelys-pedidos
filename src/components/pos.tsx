@@ -118,7 +118,7 @@ export function POS({
 
   const { totalUsd, totalBs } = itemsTotals(items, money);
   const liveOrder = orderId ? s.orders.find((o) => o.id === orderId) : undefined;
-  const balance = liveOrder ? orderBalance(liveOrder) : null;
+  const balance = liveOrder ? orderBalance(s, liveOrder) : null;
   const hasDeposits = !!balance && balance.depositUsd > 0.001;
   const amountDueUsd = balance ? balance.balanceUsd : totalUsd;
   const amountDueBs = money.toBs(amountDueUsd);

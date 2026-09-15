@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useAppState } from "@/lib/store";
 import { IcoImprimir } from "@/chasis/iconos";
-import { dt, num } from "@/lib/format";
+import { dt } from "@/lib/format";
 import { itemsTotals, lineBs, moneyOf, moneyOfSale, unitBs } from "@/lib/pricing";
 import { orderBalance } from "@/lib/orders";
 import type { Money } from "@/lib/money";
@@ -24,8 +24,10 @@ type TicketProps = { sale: Sale; order?: never } | { order: Order; sale?: never 
  *   comprobante de pedido pendiente, no como factura de venta — muestra el
  *   abono y el saldo pendiente vía `orderBalance()` cuando aplica.
  *
- * El bolívar es el monto principal (es lo que el cliente paga); el USD queda
- * como referencia secundaria, más pequeño, entre paréntesis.
+ * El bolívar es el único monto que se imprime (es lo que el cliente paga):
+ * no lleva ninguna referencia en dólares, ni por línea ni en los totales,
+ * abonos, pagos o vuelto. La nota del pedido/venta (`order.note`/`sale.note`),
+ * si existe, se imprime igual que en la lista de pedidos.
  */
 export function TicketPreview(props: TicketProps) {
   const s = useAppState();
@@ -37,13 +39,12 @@ export function TicketPreview(props: TicketProps) {
   );
 
   const items = order ? order.items : sale!.items;
-  const { totalBs, totalUsd } = order
-    ? itemsTotals(order.items, money)
-    : { totalBs: sale!.totalBs, totalUsd: sale!.totalUsd };
-  const balance = order ? orderBalance(order) : null;
+  const { totalBs } = order ? itemsTotals(order.items, money) : { totalBs: sale!.totalBs };
+  const balance = order ? orderBalance(s, order) : null;
   const cashierName = order
     ? (s.users.find((u) => u.id === order.userId)?.fullName ?? "—")
     : sale!.userName;
+  const note = order ? order.note : sale!.note;
 
   return (
     <div className="space-y-3">
@@ -73,6 +74,12 @@ export function TicketPreview(props: TicketProps) {
         <p>FECHA: {dt(order ? order.createdAt : sale!.createdAt)}</p>
         <p>CLIENTE: {order ? order.customerName : sale!.customerName}</p>
         <p>CAJERO: {cashierName}</p>
+        {note && (
+          <p className="mt-1 border border-black px-1 py-1 text-[9px]">
+            <span className="font-bold uppercase">Nota: </span>
+            {note}
+          </p>
+        )}
         <Sep />
         {items.map((i, k) => {
           const unit = i.bsOnly ? (i.unitPriceBs ?? 0) : unitBs(i, money);
@@ -87,15 +94,11 @@ export function TicketPreview(props: TicketProps) {
                 </span>
                 <span>{money.fmtBsAmount(subtotal)}</span>
               </div>
-              {!i.bsOnly && (
-                <p className="text-right text-[8px] text-black/50">≈ {money.fmtUsd(i.subtotalUsd)}</p>
-              )}
             </div>
           );
         })}
         <Sep />
         <Row l="TOTAL" r={money.fmtBsAmount(totalBs)} bold />
-        <p className="text-right text-[8px] text-black/50">≈ {money.fmtUsd(totalUsd)}</p>
 
         {order && balance ? (
           <>
@@ -104,18 +107,14 @@ export function TicketPreview(props: TicketProps) {
               <>
                 <p>ABONOS:</p>
                 {balance.deposits.map((d, k) => {
-                  const isUsd = d.currency === "USD";
-                  const primary = isUsd ? money.fmtBs(d.amount) : money.fmtBsAmount(d.amount);
-                  const secondary = isUsd ? "$" + num(d.amount) : money.fmtUsd(money.toUsd(d.amount));
+                  const primary = d.currency === "USD" ? money.fmtBs(d.amount) : money.fmtBsAmount(d.amount);
                   return (
                     <div key={k} className="mb-0.5">
                       <Row l={d.methodName + (d.reference ? " #" + d.reference : "")} r={primary} />
-                      <p className="text-right text-[8px] text-black/50">≈ {secondary}</p>
                     </div>
                   );
                 })}
                 <Row l="ABONADO" r={money.fmtBs(balance.depositUsd)} />
-                <p className="text-right text-[8px] text-black/50">≈ {money.fmtUsd(balance.depositUsd)}</p>
               </>
             ) : null}
             {balance.status === "pagado" ? (
@@ -123,8 +122,6 @@ export function TicketPreview(props: TicketProps) {
             ) : (
               <Row l="SALDO PENDIENTE" r={money.fmtBs(balance.balanceUsd)} bold />
             )}
-            <Sep />
-            <p>TASA BCV USD (del día): {money.fmtRate()}</p>
             <Sep />
             <p className="py-1 text-center text-[10px] font-bold uppercase">
               {balance.status !== "pagado" ? "Pendiente de pago" : "Comprobante de pedido"}
@@ -137,24 +134,16 @@ export function TicketPreview(props: TicketProps) {
             <Sep />
             <p>PAGOS:</p>
             {sale!.payments.map((p, k) => {
-              const isUsd = p.currency === "USD";
-              const primary = isUsd ? money.fmtBs(p.amount) : money.fmtBsAmount(p.amount);
-              const secondary = isUsd ? "$" + num(p.amount) : money.fmtUsd(money.toUsd(p.amount));
+              const primary = p.currency === "USD" ? money.fmtBs(p.amount) : money.fmtBsAmount(p.amount);
               return (
                 <div key={k} className="mb-0.5">
                   <Row l={p.methodName + (p.reference ? " #" + p.reference : "")} r={primary} />
-                  <p className="text-right text-[8px] text-black/50">≈ {secondary}</p>
                 </div>
               );
             })}
             {(sale!.changeUsd ?? 0) > 0.001 && (
-              <>
-                <Row l="VUELTO" r={money.fmtBs(sale!.changeUsd ?? 0)} bold />
-                <p className="text-right text-[8px] text-black/50">≈ {money.fmtUsd(sale!.changeUsd ?? 0)}</p>
-              </>
+              <Row l="VUELTO" r={money.fmtBs(sale!.changeUsd ?? 0)} bold />
             )}
-            <Sep />
-            <p>TASA BCV USD: {num(sale!.rateSnapshot.usd)}</p>
             <Sep />
             <p className="py-1 text-center text-[11px] font-bold uppercase">{s.company.ticketFooter}</p>
           </>

@@ -12,7 +12,7 @@
  */
 
 import { newId } from "./ids";
-import { bcvRate } from "./pricing";
+import { bcvRate, lineUsd, moneyOf } from "./pricing";
 import { getState, logAudit, mutate } from "./store";
 import { queueDepositCreate, queueDepositVoid } from "./sync/mutations";
 import type {
@@ -42,9 +42,20 @@ export function depositTotalUsd(o: Order) {
 /**
  * Estado de pago derivado de un pedido. Úsalo en lugar de sumar abonos a mano:
  * es el único sitio donde se decide qué cuenta como abonado y qué como saldo.
+ *
+ * `totalUsd` aquí **no** es `o.totalUsd`: ese campo persistido excluye a
+ * propósito las líneas `bsOnly` (torta fría, precio fijo en Bs, sin precio
+ * USD — ver `itemsTotals` en lib/pricing), lo cual es correcto para lo que
+ * representa (el total "en dólares" del pedido), pero usarlo aquí hacía que
+ * un pedido compuesto sólo por líneas `bsOnly` balanceara siempre en $0: el
+ * saldo pendiente daba 0 aunque el cliente debiera bolívares, y un abono sobre
+ * ese pedido se rechazaba por "superar el saldo". Se recalcula sumando
+ * `lineUsd` por línea, que sí convierte las líneas `bsOnly` a su equivalente
+ * en USD a la tasa BCV vigente (misma tasa con la que se cobraría hoy).
  */
-export function orderBalance(o: Order): OrderBalance {
-  const totalUsd = o.totalUsd;
+export function orderBalance(s: AppState, o: Order): OrderBalance {
+  const money = moneyOf(s);
+  const totalUsd = o.items.reduce((a, i) => a + lineUsd(i, money), 0);
   const depositUsd = depositTotalUsd(o);
   const raw = totalUsd - depositUsd;
   const balanceUsd = Math.max(0, Math.round(raw * 100) / 100);
@@ -93,7 +104,7 @@ export function depositsOfDay(s: AppState, dayISO: string) {
 export function ordersWithBalance(s: AppState) {
   return s.orders
     .filter((o) => o.status !== "cancelado" && o.status !== "procesado")
-    .map((o) => ({ order: o, balance: orderBalance(o) }))
+    .map((o) => ({ order: o, balance: orderBalance(s, o) }))
     .filter((x) => x.balance.depositUsd > EPS && x.balance.balanceUsd > EPS)
     .sort((a, b) => a.order.createdAt.localeCompare(b.order.createdAt));
 }
@@ -168,7 +179,7 @@ export function addOrderDeposit(
   const built = buildDeposit(s, input);
   if (!built.ok) return { ok: false, error: built.error };
 
-  const balance = orderBalance(order);
+  const balance = orderBalance(s, order);
   if (built.deposit.usdEquivalent > balance.balanceUsd + EPS)
     return {
       ok: false,

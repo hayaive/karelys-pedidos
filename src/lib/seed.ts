@@ -115,6 +115,7 @@ export function buildSeed(): AppState {
     { id: "pm-pm", name: "Pago Móvil", currency: "BS" as const, requiresReference: true, active: true },
     { id: "pm-tr", name: "Transferencia", currency: "BS" as const, requiresReference: true, active: true },
     { id: "pm-bin", name: "Binance", currency: "USD" as const, requiresReference: true, active: true },
+    { id: "pm-pos", name: "Punto de venta", currency: "BS" as const, requiresReference: true, active: true },
   ];
 
   const state: AppState = {

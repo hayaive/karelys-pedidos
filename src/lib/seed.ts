@@ -4,7 +4,6 @@ import { slug, uid } from "./ids";
 import { SCHEMA_VERSION } from "./migrations";
 import {
   COLD_CAKE_ALERT_USD,
-  COLD_CAKE_CATEGORY_ID,
   COLD_CAKE_TARGET_USD,
   DEFAULT_BS_ROUNDING,
   DEFAULT_RATE_MAX_AGE_HOURS,
@@ -135,9 +134,6 @@ export function buildSeed(): AppState {
     ],
     categories,
     priceTypes,
-    // Se llenan más abajo con ensureColdCakeFamily(), la misma función que usa
-    // la migración, para que semilla e instalación migrada queden idénticas.
-    priceGroups: [],
     products,
     movements: [],
     customers: seedCustomers(),
@@ -158,10 +154,10 @@ export function buildSeed(): AppState {
       saleNext: 1,
       orderPrefix: "P-",
       orderNext: 1,
-      // Umbral de alerta y precio objetivo de tortas frías (ver pricing-rules).
+      // Umbral de alerta y precio objetivo del producto genérico de tortas
+      // frías, el único con alerta de precio bajo (ver pricing-rules).
       coldCakeMin: COLD_CAKE_ALERT_USD,
       coldCakeMax: COLD_CAKE_TARGET_USD,
-      coldCakeCategory: COLD_CAKE_CATEGORY_ID,
       bsRounding: DEFAULT_BS_ROUNDING,
       rateMaxAgeHours: DEFAULT_RATE_MAX_AGE_HOURS,
     },

@@ -39,7 +39,6 @@ import type {
   OrderDeposit,
   OrderStatus,
   PaymentMethod,
-  PriceGroup,
   PriceType,
   Product,
   Role,
@@ -260,9 +259,12 @@ function mergeSale(local: Sale, remote: Sale, pending: boolean): Sale {
 
 /**
  * Aplica un delta. El orden es el del §6.4 (dependencias por FK):
- * company → categories → priceTypes → priceGroups → products → paymentMethods →
+ * company → categories → priceTypes → products → paymentMethods →
  * roles → users → customers → orders → orderDeposits → sales → movements →
  * closures → audit → deletions.
+ *
+ * `changes.priceGroups` puede seguir llegando y **se ignora**: el precio es del
+ * producto desde el esquema 6 (ver `toV6` en lib/migrations).
  *
  * Se recorre explícitamente en ese orden en lugar de iterar `Object.keys`: el
  * orden de las claves de un JSON no es contractual.
@@ -276,7 +278,6 @@ export function applyDelta(changes: DeltaChanges, deletions: DeltaDeletion[] = [
 
     s.categories = upsert<Category>(s.categories, changes.categories, remoteWins);
     s.priceTypes = upsert<PriceType>(s.priceTypes, changes.priceTypes, remoteWins);
-    s.priceGroups = upsert<PriceGroup>(s.priceGroups, changes.priceGroups, remoteWins);
     s.products = upsert<Product>(s.products, changes.products, (l, r) =>
       mergeProduct(l, r, keepStock),
     );
@@ -358,7 +359,9 @@ function applyDeletions(s: AppState, deletions: DeltaDeletion[]) {
         s.priceTypes = s.priceTypes.filter((x) => x.id !== id);
         break;
       case "price_group":
-        s.priceGroups = s.priceGroups.filter((x) => x.id !== id);
+        // El cliente ya no guarda grupos de precio (esquema 6): el tombstone
+        // llega y no hay nada que borrar. Se declara igual para no caer al
+        // `default`, que lo reportaría como entidad desconocida.
         break;
       case "product":
         s.products = s.products.filter((x) => x.id !== id);
@@ -392,7 +395,7 @@ function applyDeletions(s: AppState, deletions: DeltaDeletion[]) {
  *
  * ### Lo que el servidor manda completo: se reemplaza
  *
- * Catálogo (categorías, tipos de precio, grupos de precio, productos, formas de
+ * Catálogo (categorías, tipos de precio, productos, formas de
  * pago), clientes, usuarios y roles no están acotados por ninguna ventana: el
  * bootstrap los trae enteros, así que es la foto autoritativa y una ausencia
  * significa "ya no existe". Se aplican con `replaceAuthoritative`.
@@ -417,8 +420,8 @@ function applyDeletions(s: AppState, deletions: DeltaDeletion[]) {
  *
  * Integridad referencial: igual que con los tombstones (`applyDeletions`), un
  * registro local que se conserva puede quedar apuntando a algo que el servidor no
- * mandó. La aplicación ya lo tolera —`resolvePrices` cae a los precios propios del
- * producto cuando su grupo no está, y las listas resuelven el nombre del cliente
+ * mandó. La aplicación ya lo tolera —`priceOf` cae a la primera celda de precio
+ * cuando falta la del tipo pedido, y las listas resuelven el nombre del cliente
  * sobre la marcha— y es el precio de tener una sola fuente de verdad.
  *
  * ### Lo que llega recortado: se funde
@@ -446,7 +449,7 @@ export function applyBootstrap(b: BootstrapResponse) {
 
     s.categories = replaceAuthoritative<Category>(s.categories, b.categories, pending);
     s.priceTypes = replaceAuthoritative<PriceType>(s.priceTypes, b.priceTypes, pending);
-    s.priceGroups = replaceAuthoritative<PriceGroup>(s.priceGroups, b.priceGroups, pending);
+    // `b.priceGroups` se ignora a propósito: ver el comentario en lib/sync/types.
     s.products = replaceAuthoritative<Product>(s.products, b.products, pending, (l, r) =>
       mergeProduct(l, r, keepStock),
     );
@@ -525,9 +528,6 @@ export function applyServerEntity(entity: string, serverEntity: unknown) {
     case "product":
       applyDelta({ products: [serverEntity as Product] });
       break;
-    case "priceGroup":
-      applyDelta({ priceGroups: [serverEntity as PriceGroup] });
-      break;
     case "closure":
       applyDelta({ closures: [serverEntity as DailyClosure] });
       break;
@@ -536,8 +536,8 @@ export function applyServerEntity(entity: string, serverEntity: unknown) {
       applyRate(serverEntity as ExchangeRate);
       break;
     default:
-      // `productPrice.set` y `priceGroupPrice.set` devuelven el padre releído; el
-      // resto no devuelve entidad. Nada que adoptar.
+      // `productPrice.set` devuelve el padre releído; el resto no devuelve
+      // entidad. Nada que adoptar.
       break;
   }
 }

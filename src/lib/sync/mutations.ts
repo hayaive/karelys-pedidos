@@ -20,20 +20,21 @@
  *     ya mueve el inventario en su misma transacción; encolarlos aparte descontaría
  *     el stock dos veces.
  *
- * Estado de las 20 operaciones del contrato:
+ * Estado de las operaciones del contrato que este cliente usa:
  *  · implementadas de punta a punta: `sale.create`, `sale.void`, `order.create`,
  *    `order.update`, `order.status`, `order.delete`, `orderDeposit.create`,
  *    `orderDeposit.void`, `movement.create`, `customer.create`, `customer.update`,
- *    `product.create`, `product.update`, `productPrice.set`,
- *    `priceGroupPrice.set`, `rate.create`.
+ *    `product.create`, `product.update`, `productPrice.set`, `rate.create`.
  *  · pendientes (el motor ya las soporta; sólo falta la llamada en su mutador):
- *    `priceGroup.create`, `priceGroup.update`, `closure.create`, `audit.append`.
+ *    `closure.create`, `audit.append`.
+ *
+ * Las tres operaciones de grupo de precio desaparecieron con el esquema 6, que
+ * retiró el mecanismo entero (ver `toV6` en lib/migrations).
  *
  * `productPrice.set` no hace falta para el formulario de producto: su parche de
  * `product.update` ya lleva `prices` completo, y la granularidad por celda sólo
- * gana cuando se edita **un** precio suelto: la pestaña de precios agrupados
- * (`priceGroupPrice.set`) y la corrección de una alerta de precio bajo sobre un
- * producto sin grupo (`productPrice.set`).
+ * gana cuando se edita **un** precio suelto: la corrección de una alerta de
+ * precio bajo en USD.
  */
 
 import type {
@@ -284,7 +285,6 @@ export function queueProductCreate(product: Product) {
       // El formulario muestra 0 cuando nadie tocó el campo, así que 0 es lo que
       // corresponde mandar, no "nada".
       bsPrice: product.bsOnly ? (product.bsPrice ?? 0) : product.bsPrice,
-      priceGroupId: product.priceGroupId,
       isCombo: product.isCombo,
       allowCustomization: product.allowCustomization,
       customizationPrice: product.customizationPrice,
@@ -308,8 +308,16 @@ export function queueProductCreate(product: Product) {
  * lista vacía no se manda: el formulario de producto no edita combos, de modo que
  * un `[]` significaría "este formulario no sabe de combos" y borraría las líneas
  * del combo en el servidor.
+ *
+ * `priceGroupId` ya no es un campo del producto en este cliente (esquema 6) pero
+ * el parche admite `null` para poder **desvincular** en el servidor lo que quedó
+ * agrupado: lo manda `toV6` y nadie más. `null` viaja; `undefined` se descarta
+ * (ver `prune` en lib/sync/queue), que es justo la distinción que hace falta.
  */
-export function queueProductUpdate(productId: ID, patch: Partial<Product>) {
+export function queueProductUpdate(
+  productId: ID,
+  patch: Partial<Product> & { priceGroupId?: ID | null },
+) {
   const payload: Record<string, unknown> = { productId };
 
   if (patch.code !== undefined) payload.code = patch.code;
@@ -337,36 +345,25 @@ export function queueProductUpdate(productId: ID, patch: Partial<Product>) {
 /* ── Precios ──────────────────────────────────────────── */
 
 /**
- * `priceGroupPrice.set`: fija **una** celda `(grupo, tipo de precio)`.
+ * `productPrice.set`: fija **una** celda `(producto, tipo de precio)`.
  *
  * La celda es la unidad de conflicto: el servidor resuelve con LWW por celda, así
  * que dos cajas que corrigen a la vez el precio Mayor y el precio Detal del mismo
- * grupo **sobreviven las dos**. Por eso se encola una mutación por cada celda que
- * de verdad cambió y no un `priceGroup.update` con la lista `prices` completa:
+ * producto **sobreviven las dos**. Por eso se encola una mutación por cada celda
+ * que de verdad cambió y no un `product.update` con la lista `prices` completa:
  * esa lista se reemplaza en bloque en el servidor, de modo que mandarla haría que
  * el último en sincronizar pisara la corrección del otro con el valor viejo que
  * tenía en su copia local.
  *
- * Es la operación de la pantalla "Precios agrupados" —donde se corrige la alerta
- * de precio bajo de las tortas frías— y cambiar aquí el precio cambia el de todos
- * los productos del grupo a la vez, que es justo lo que el negocio espera.
+ * Sólo la usa la corrección de una alerta de precio bajo en **USD** (ver
+ * `applyPriceAlertFix` en lib/catalog). El formulario de producto no la necesita:
+ * su `product.update` ya manda `prices` completo. Y la corrección de un producto
+ * `bsOnly` tampoco: ésa va por `product.update` con `bsOnly` + `bsPrice`, porque
+ * el precio en Bs vive en otra tabla y no es una celda de esta rejilla.
  *
  * `amount` tiene que ser ≥ 0 (`@Min(0)` en `SetPriceDto`): un negativo es un
  * rechazo **permanente**, y un rechazo permanente saca la mutación de la cola y
  * deja el precio corregido sólo en este navegador. Quien llama valida antes.
- */
-export function queuePriceGroupPriceSet(priceGroupId: ID, priceTypeId: ID, amount: number) {
-  enqueueMutation("priceGroupPrice.set", { priceGroupId, priceTypeId, amount });
-}
-
-/**
- * `productPrice.set`: la misma idea que la anterior pero sobre el precio **propio**
- * de un producto, celda `(producto, tipo de precio)`.
- *
- * Sólo la usa la corrección de una alerta de precio bajo cuyo producto no
- * pertenece a ningún grupo (caso residual: un producto de la familia de tortas
- * frías sin agrupar, ver `applyPriceAlertFix`). El formulario de producto no la
- * necesita: su `product.update` ya manda `prices` completo.
  */
 export function queueProductPriceSet(productId: ID, priceTypeId: ID, amount: number) {
   enqueueMutation("productPrice.set", { productId, priceTypeId, amount });

@@ -95,43 +95,22 @@ export interface ProductPrice {
 }
 
 /**
- * Regla de precio en USD aplicable a un grupo de precio o a una familia entera.
+ * Regla de precio en USD del único producto que tiene una: el genérico
+ * "Tortas Frías" (ver `priceRuleOf` en lib/pricing).
  *
- * - `minUsd`    umbral de alerta: si el precio USD queda por debajo, se dispara
- *               una alerta pidiendo subirlo (ver `priceAlerts` en lib/pricing).
+ * - `minUsd`    umbral de alerta: si el precio USD efectivo queda por debajo, se
+ *               dispara una alerta pidiendo subirlo (ver `priceAlerts`).
  * - `targetUsd` precio objetivo que sugiere la alerta al corregir.
- * - `band`      banda dura opcional para el equivalente en Bs ya redondeado.
- *               Sólo los grupos que la declaran pueden bloquear una venta;
- *               si falta, la regla es informativa (alerta) y nunca bloquea.
+ *
+ * La regla es **informativa**: avisa, nunca bloquea una venta. La banda dura que
+ * existió hasta el esquema 5 se retiró porque en la práctica el precio se
+ * corregía dentro del rango antes de validarse y sólo llegaba a bloquear cuando
+ * faltaba la tasa BCV; eso ahora se dice con ese nombre (ver el guard de tasa en
+ * `createSale` y en el POS).
  */
 export interface PriceRule {
   minUsd: number;
   targetUsd: number;
-  band?: { minUsd: number; maxUsd: number };
-}
-
-/**
- * Unidad de precio compartida por varios productos: el "precio general".
- * Editando el grupo se cambia el precio de todos sus miembros a la vez.
- *
- * Un grupo puede tener un único miembro, y hoy los tres de tortas frías lo
- * tienen: el genérico "Tortas Frías" y los dos con precio propio y
- * diferenciado ("Brownie", "Torta Quesillo"). La indirección se
- * conserva igual porque es donde viven la regla de precio y la banda, y porque
- * un producto nuevo de la familia entra al precio general sin tocar código.
- */
-export interface PriceGroup {
-  id: ID;
-  name: string;
-  /** Familia/categoría a la que pertenece el grupo (para agruparlo en la UI). */
-  categoryId?: ID;
-  /** Precios en USD por tipo de precio. Es la fuente de verdad de sus miembros. */
-  prices: ProductPrice[];
-  /** Regla propia; si falta se hereda la de `CompanySettings`. */
-  rule?: PriceRule;
-  active: boolean;
-  createdAt: string;
-  rev?: Rev;
 }
 
 export interface Product {
@@ -148,19 +127,17 @@ export interface Product {
   bsOnly?: boolean;
   bsPrice?: number;
   /**
-   * Precio propio en USD. Es la fuente de verdad **sólo** si el producto no
-   * pertenece a un grupo de precio. Se conserva siempre como respaldo
-   * histórico; usa `priceOf(state, product, priceTypeId)` para leer el precio
-   * efectivo y `ownPriceOf(product, priceTypeId)` para editar el propio.
+   * Precio propio en USD por tipo de precio. Desde el esquema 6 es **la única
+   * fuente de verdad** del precio de venta: ya no existe la indirección del
+   * grupo de precio, y se edita directo desde Inventario. Léelo con
+   * `priceOf(state, product, priceTypeId)`.
+   *
+   * Nunca se guarda un equivalente en Bs: los productos con precio en USD
+   * (tortas de cumpleaños incluidas) se convierten en el momento de mostrar o
+   * vender con la tasa BCV vigente. La excepción es `bsOnly`, cuyo precio vive
+   * en `bsPrice` y no se convierte.
    */
   prices: ProductPrice[];
-  /**
-   * Cuando está definido, el precio de venta lo dicta el `PriceGroup` y NO
-   * `prices`. Nunca se guarda un equivalente en Bs: los productos con precio
-   * en USD (tortas de cumpleaños incluidas) se convierten en el momento de
-   * mostrar o vender con la tasa BCV vigente.
-   */
-  priceGroupId?: ID;
   isCombo?: boolean;
   comboItems?: ComboItem[];
   allowCustomization?: boolean;
@@ -172,19 +149,40 @@ export interface Product {
 /** Alerta de precio derivada (no se persiste: se calcula al vuelo). */
 export type PriceAlertKind = "precio_bajo";
 
+/**
+ * Alerta de precio bajo. **Derivada**: sale de `s.products` + `s.rates` cada vez
+ * que se pide, así que aparece y desaparece sola. En particular la de un
+ * producto `bsOnly` se dispara **sin que nadie edite nada**, sólo porque la
+ * devaluación bajó el equivalente USD de su precio en Bs por debajo del umbral.
+ */
 export interface PriceAlert {
   kind: PriceAlertKind;
-  /** Grupo cuyo precio hay que corregir (si el precio lo dicta un grupo). */
-  priceGroupId?: ID;
-  priceGroupName?: string;
-  /** Productos afectados por esa unidad de precio. */
-  productIds: ID[];
-  productNames: string[];
-  priceTypeId: ID;
-  priceTypeName: string;
+  /**
+   * De dónde sale el precio que se está midiendo:
+   *  · `"bs"`  el producto se vende a precio fijo en Bs (`bsOnly`). Hay **una**
+   *            sola alerta: el precio en Bs es un único número, sin Mayor/Detal.
+   *  · `"usd"` precio propio en USD: una alerta por tipo de precio afectado.
+   */
+  mode: "bs" | "usd";
+  productId: ID;
+  productName: string;
+  /** Sólo en modo `usd`: el tipo de precio que quedó por debajo del umbral. */
+  priceTypeId?: ID;
+  priceTypeName?: string;
+  /** Precio efectivo en USD hoy. En modo `bs`, el equivalente de `currentBs`. */
   currentUsd: number;
+  /** Modo `bs`: el precio en Bs tal como está guardado. */
+  currentBs?: number;
+  /** Umbral por debajo del cual se avisa (`company.coldCakeMin`). */
   thresholdUsd: number;
+  /** Precio objetivo al que la alerta pide subir (`company.coldCakeMax`). */
   suggestedUsd: number;
+  /** Modo `bs`: equivalente en Bs de `suggestedUsd`, ya redondeado. */
+  suggestedBs?: number;
+  /** Tasa con la que se evaluó la alerta, y su fecha y vigencia. */
+  rate: number;
+  rateAt: string | null;
+  rateStale: boolean;
   message: string;
 }
 
@@ -441,15 +439,14 @@ export interface CompanySettings {
   orderPrefix: string;
   orderNext: number;
   /**
-   * Regla de precio por defecto de las tortas frías (se hereda cuando un grupo
-   * no declara la suya):
+   * Regla de precio del producto genérico "Tortas Frías" (el único con alerta):
    *   `coldCakeMin` → umbral de alerta de precio bajo (por defecto 1.10 USD)
    *   `coldCakeMax` → precio objetivo sugerido por la alerta (por defecto 1.30)
    * Léelas siempre con `companyPriceRule(state)` (lib/pricing), no directo.
+   * Ajustes valida que `coldCakeMax >= coldCakeMin` al guardar.
    */
   coldCakeMin: number;
   coldCakeMax: number;
-  coldCakeCategory: string;
   bsRounding: number;
   /** Horas tras las que la tasa BCV se considera vencida y hay que refrescarla. */
   rateMaxAgeHours?: number;
@@ -467,8 +464,6 @@ export interface AppState {
   users: User[];
   categories: Category[];
   priceTypes: PriceType[];
-  /** Precios generales compartidos. Ver `PriceGroup`. */
-  priceGroups: PriceGroup[];
   products: Product[];
   movements: InventoryMovement[];
   customers: Customer[];

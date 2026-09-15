@@ -116,7 +116,7 @@ export interface PriceRule {
  *
  * Un grupo puede tener un único miembro, y hoy los tres de tortas frías lo
  * tienen: el genérico "Tortas Frías" y los dos con precio propio y
- * diferenciado ("Oreo y Brownie", "Torta Quesillo"). La indirección se
+ * diferenciado ("Brownie", "Torta Quesillo"). La indirección se
  * conserva igual porque es donde viven la regla de precio y la banda, y porque
  * un producto nuevo de la familia entra al precio general sin tocar código.
  */

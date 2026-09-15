@@ -161,7 +161,7 @@ export function companyPriceRule(s: AppState): PriceRule {
  * no tienen umbral y no deben generar alertas.
  *
  * Un producto que pertenece a un grupo de precio se rige **sólo** por la
- * regla de ese grupo (o ninguna, si el grupo no la declara): "Oreo y Brownie"
+ * regla de ese grupo (o ninguna, si el grupo no la declara): "Brownie"
  * y "Torta Quesillo" viven en la categoría de tortas frías pero su grupo no
  * declara `rule` a propósito, para quedar fuera de la banda del genérico (ver
  * comentario de `priceBandCheck`). El resguardo de la regla de empresa sólo

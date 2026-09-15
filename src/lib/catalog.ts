@@ -120,8 +120,11 @@ function ensureGroup(
     return g;
   }
   // Grupo existente: se respetan los precios que el negocio haya editado y
-  // sólo se reparan los metadatos estructurales.
+  // sólo se reparan los metadatos estructurales. El nombre no es editable a
+  // mano desde la UI, así que reparar aquí es seguro: sólo alinea el grupo con
+  // la constante de negocio vigente (ver renombre "Oreo y Brownie" → "Brownie").
   g.categoryId = spec.categoryId;
+  if (g.name !== spec.name) g.name = spec.name;
   if (!g.prices.length) g.prices = spec.prices;
   if (spec.rule && !g.rule) g.rule = spec.rule;
   return g;
@@ -283,7 +286,7 @@ function collapseColdCakeFlavors(s: AppState, cat: Category): string[] {
  * producto:
  *
  *   1. "Tortas Frías"    → producto único que reemplaza a los 13 sabores
- *   2. "Oreo y Brownie"  → precio propio y diferenciado
+ *   2. "Brownie"         → precio propio y diferenciado
  *   3. "Torta Quesillo"  → precio propio y diferenciado
  *
  * Los tres conservan la indirección de `PriceGroup` aunque tengan un solo
@@ -320,8 +323,8 @@ export function ensureColdCakeFamily(s: AppState): string[] {
     if (quesillo.name !== TORTA_QUESILLO_NAME) quesillo.name = TORTA_QUESILLO_NAME;
   }
 
-  /* 3 · Oreo y Brownie: producto nuevo si no existía */
-  let oreo = productByName(s, OREO_BROWNIE_NAME) ?? null;
+  /* 3 · Brownie: producto nuevo si no existía */
+  let oreo = productByCode(s, OREO_BROWNIE_CODE) ?? productByName(s, OREO_BROWNIE_NAME) ?? null;
   if (!oreo) {
     const code = nextFreeCode(s, OREO_BROWNIE_CODE);
     oreo = {
@@ -337,9 +340,12 @@ export function ensureColdCakeFamily(s: AppState): string[] {
     };
     s.products.push(oreo);
     notes.push(`producto "${OREO_BROWNIE_NAME}" creado (${code})`);
-  } else if (oreo.categoryId !== cat.id) {
-    oreo.categoryId = cat.id;
-    notes.push(`"${OREO_BROWNIE_NAME}" movido a ${cat.name}`);
+  } else {
+    if (oreo.categoryId !== cat.id) {
+      oreo.categoryId = cat.id;
+      notes.push(`"${OREO_BROWNIE_NAME}" movido a ${cat.name}`);
+    }
+    if (oreo.name !== OREO_BROWNIE_NAME) oreo.name = OREO_BROWNIE_NAME;
   }
 
   /* 4 · Producto único de sabores: se crea y se retiran los 13 individuales.

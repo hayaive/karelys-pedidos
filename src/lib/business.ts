@@ -7,7 +7,7 @@ import {
   orderBalance,
   type NewDepositInput,
 } from "./orders";
-import { isGenericColdCake, itemsTotals, rateSnapshot } from "./pricing";
+import { isGenericColdCake, itemsTotals, moneyOf, rateSnapshot } from "./pricing";
 import { getState, logAudit, mutate } from "./store";
 import { newId } from "./ids";
 import {
@@ -313,14 +313,24 @@ export function createOrder(input: {
 }): { ok: boolean; order?: Order; error?: string } {
   const s = getState();
   if (!input.items.length) return { ok: false, error: "El pedido no tiene productos" };
+  // Suma directa de `subtotalUsd`: en una línea `bsOnly` eso siempre es 0 (no
+  // tiene precio propio en USD), así que este total NO sirve para validar un
+  // abono — sólo se guarda en `order.totalUsd` por compatibilidad con lo que
+  // ese campo ya representaba (igual que `orderBalance` en lib/orders.ts, que
+  // tampoco confía en este valor para el saldo real).
   const totalUsd = input.items.reduce((a, i) => a + i.subtotalUsd, 0);
+  // Total real para validar el abono: convierte también las líneas `bsOnly` a
+  // su equivalente USD vigente (`lineUsd`, vía `itemsTotals`). Sin esto, un
+  // pedido con torta fría rechazaba cualquier abono con "supera el total del
+  // pedido ($0.00)" aunque el total en Bs sí alcanzara para cubrirlo.
+  const { totalUsd: totalUsdReal } = itemsTotals(input.items, moneyOf(s));
 
   const built = input.deposit ? buildDeposit(s, input.deposit) : null;
   if (built && !built.ok) return { ok: false, error: built.error };
-  if (built?.ok && built.deposit.usdEquivalent > totalUsd + 0.02)
+  if (built?.ok && built.deposit.usdEquivalent > totalUsdReal + 0.02)
     return {
       ok: false,
-      error: `El abono ($${built.deposit.usdEquivalent.toFixed(2)}) supera el total del pedido ($${totalUsd.toFixed(2)})`,
+      error: `El abono ($${built.deposit.usdEquivalent.toFixed(2)}) supera el total del pedido ($${totalUsdReal.toFixed(2)})`,
     };
 
   let order: Order | undefined;

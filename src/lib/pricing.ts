@@ -302,9 +302,16 @@ export function unitBs(i: LineItem, m: Money) {
  * Totales de un carrito con un conversor. El total en Bs se calcula al vuelo:
  * así una torta de cumpleaños siempre se cobra a la tasa del momento de la
  * venta y nunca a una tasa congelada al crear el producto.
+ *
+ * `totalUsd` usa `lineUsd()` para TODAS las líneas, incluidas las `bsOnly`:
+ * antes sumaba `subtotalUsd` directo, que en una línea `bsOnly` siempre es 0
+ * (no tiene precio propio en USD) — así el "total en $" de un carrito con
+ * torta fría daba 0, lo que a su vez bloqueaba abonos y pagos en USD sobre
+ * ese carrito ("el abono supera el saldo pendiente ($0.00)") aunque el saldo
+ * real, convertido a la tasa vigente, sí alcanzara para cubrirlos.
  */
 export function itemsTotals(items: LineItem[], m: Money) {
-  const totalUsd = items.reduce((a, i) => a + (i.bsOnly ? 0 : i.subtotalUsd), 0);
+  const totalUsd = items.reduce((a, i) => a + lineUsd(i, m), 0);
   const totalBs = items.reduce((a, i) => a + lineBs(i, m), 0);
   return { totalUsd, totalBs };
 }

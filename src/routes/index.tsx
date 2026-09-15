@@ -15,9 +15,11 @@ import type { Icono } from "@/chasis/iconos";
 import { AppShell, PageHead } from "@/components/app-shell";
 import { useSession } from "@/lib/auth";
 import { Badge, BarraProg, Btn, Card, CardHead, Cifra, Empty } from "@/components/ui-kit";
+import { PriceAlertAviso } from "@/components/price-alert";
 import { useAppState } from "@/lib/store";
 import { bs, dayKey, num, time, usd } from "@/lib/format";
 import { currentRate, itemsTotals } from "@/lib/business";
+import { priceAlertKey, priceAlerts } from "@/lib/pricing";
 import { useMoney } from "@/hooks/use-money";
 import { cn } from "@/lib/utils";
 
@@ -55,6 +57,11 @@ function Dashboard() {
   const totalUsd = sales.reduce((a, x) => a + x.totalUsd, 0);
   const pending = s.orders.filter((o) => ["pendiente", "preparacion", "listo"].includes(o.status));
   const low = s.products.filter((p) => p.active && !p.isCombo && p.stock <= p.minStock);
+  /* Precio bajo es, como el stock bajo, algo que hay que atender hoy: el precio
+     del genérico de tortas frías está fijo en Bs y su equivalente en USD cae
+     solo con la devaluación, así que la alerta aparece sin que nadie edite nada
+     y este es el primer sitio donde el dueño la va a ver. */
+  const alerts = priceAlerts(s);
   const cash = sales
     .flatMap((x) => x.payments)
     .filter((p) => {
@@ -87,6 +94,14 @@ function Dashboard() {
         title="Buen día en el mostrador"
         sub="Lo que se ha cobrado hoy, lo que falta por entregar y lo que hay que reponer."
       />
+
+      {alerts.length > 0 && (
+        <div className="mb-4 space-y-2">
+          {alerts.map((a) => (
+            <PriceAlertAviso key={priceAlertKey(a)} alert={a} canFix={can("edit_inventory")} />
+          ))}
+        </div>
+      )}
 
       {/* La cifra del día va en ámbar, y no hay más de una por vista. */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">

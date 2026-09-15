@@ -21,7 +21,6 @@ import type {
   OrderDeposit,
   PaymentMethod,
   Permission,
-  PriceGroup,
   PriceType,
   Product,
   Role,
@@ -81,7 +80,14 @@ export interface BootstrapResponse {
   users: User[];
   categories: Category[];
   priceTypes: PriceType[];
-  priceGroups: PriceGroup[];
+  /**
+   * Grupos de precio. **El cliente ya no los usa** desde el esquema 6 (el precio
+   * es del producto, ver `toV6` en lib/migrations), pero el servidor puede
+   * seguir mandando la clave un tiempo: se declara sin forma para que quede
+   * documentado que llega y se ignora a propósito, en vez de desaparecer en
+   * silencio y parecer un olvido.
+   */
+  priceGroups?: unknown[];
   products: Product[];
   paymentMethods: PaymentMethod[];
   rates: ExchangeRate[];
@@ -106,7 +112,8 @@ export interface DeltaChanges {
   company?: CompanySettings;
   categories?: Category[];
   priceTypes?: PriceType[];
-  priceGroups?: PriceGroup[];
+  /** Ignorada desde el esquema 6, igual que en `BootstrapResponse`. */
+  priceGroups?: unknown[];
   products?: Product[];
   paymentMethods?: PaymentMethod[];
   roles?: Role[];
@@ -137,7 +144,14 @@ export interface DeltaResponse {
 
 /* ── Subida de la cola (§6.5) ─────────────────────────── */
 
-/** Las 20 operaciones que `POST /sync` reconoce. El motor es genérico; ver `lib/sync/queue`. */
+/**
+ * Las operaciones de `POST /sync` que este cliente puede producir. El motor es
+ * genérico; ver `lib/sync/queue`.
+ *
+ * Las tres de grupo de precio (`priceGroup.create`, `priceGroup.update`,
+ * `priceGroupPrice.set`) salieron de la lista con el esquema 6: ya no hay nada
+ * en la app que las pueda encolar, y `toV6` purga las que quedaran pendientes.
+ */
 export type MutationOp =
   | "sale.create"
   | "sale.void"
@@ -153,9 +167,6 @@ export type MutationOp =
   | "product.create"
   | "product.update"
   | "productPrice.set"
-  | "priceGroupPrice.set"
-  | "priceGroup.create"
-  | "priceGroup.update"
   | "rate.create"
   | "closure.create"
   | "audit.append";

@@ -18,17 +18,11 @@ import {
   Select,
   Textarea,
 } from "@/components/ui-kit";
+import { PriceAlertAviso } from "@/components/price-alert";
 import { logAudit, mutate, useAppState } from "@/lib/store";
-import { addMovement, coldCakePriceGroups, priceOf } from "@/lib/business";
-import type { PriceFixTarget } from "@/lib/catalog";
-import { attachDefaultPriceGroup, applyPriceAlertFix, setPriceGroupAmount } from "@/lib/catalog";
-import { priceAlerts } from "@/lib/pricing";
-import {
-  queuePriceGroupPriceSet,
-  queueProductCreate,
-  queueProductPriceSet,
-  queueProductUpdate,
-} from "@/lib/sync/mutations";
+import { addMovement, priceOf } from "@/lib/business";
+import { companyPriceRule, isGenericColdCake, priceAlertKey, priceAlerts } from "@/lib/pricing";
+import { queueProductCreate, queueProductUpdate } from "@/lib/sync/mutations";
 import {
   categoryErrorText,
   createCategory,
@@ -38,7 +32,7 @@ import {
 } from "@/lib/sync/categories";
 import { dt, num, usd } from "@/lib/format";
 import { uid } from "@/lib/seed";
-import type { Category, PriceAlert, Product } from "@/lib/types";
+import type { Category, Product } from "@/lib/types";
 
 export const Route = createFileRoute("/inventario")({
   ssr: false,
@@ -66,9 +60,7 @@ export const Route = createFileRoute("/inventario")({
 function Inventario() {
   const s = useAppState();
   const { can } = useSession();
-  const [tab, setTab] = useState<"productos" | "precios" | "categorias" | "movimientos">(
-    "productos",
-  );
+  const [tab, setTab] = useState<"productos" | "categorias" | "movimientos">("productos");
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("all");
   const [stockFilter, setStockFilter] = useState("all");
@@ -118,17 +110,13 @@ function Inventario() {
       {alerts.length > 0 && (
         <div className="mb-4 space-y-2">
           {alerts.map((a) => (
-            <PriceAlertAviso
-              key={(a.priceGroupId ?? a.productIds[0] ?? "alerta") + "|" + a.priceTypeId}
-              alert={a}
-              canFix={can("edit_inventory")}
-            />
+            <PriceAlertAviso key={priceAlertKey(a)} alert={a} canFix={can("edit_inventory")} />
           ))}
         </div>
       )}
 
       <div className="mb-4 flex gap-[0.15rem] overflow-x-auto border-b border-border">
-        {(["productos", "precios", "categorias", "movimientos"] as const).map((t) => (
+        {(["productos", "categorias", "movimientos"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -292,7 +280,6 @@ function Inventario() {
         </>
       )}
 
-      {tab === "precios" && <PreciosAgrupados canEdit={can("edit_inventory")} />}
       {tab === "categorias" && <Categorias />}
       {tab === "movimientos" && <Movimientos />}
 
@@ -328,145 +315,6 @@ function Inventario() {
   );
 }
 
-/**
- * Alerta de precio bajo de tortas frías. Se queda visible mientras
- * `priceAlerts` la siga reportando (estado derivado, no un flag "visto"): si
- * se ignora, reaparece en cada visita hasta que alguien corrija el precio.
- */
-function PriceAlertAviso({ alert, canFix }: { alert: PriceAlert; canFix: boolean }) {
-  return (
-    <Aviso tone="red" icon={IcoAlerta} title={`Precio bajo · ${alert.priceGroupName ?? "producto"}`}>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span>{alert.message}</span>
-        {canFix && (
-          <Btn
-            size="sm"
-            variant="amber"
-            onClick={() => {
-              let fixed: PriceFixTarget[] = [];
-              mutate((st) => {
-                fixed = applyPriceAlertFix(st, alert);
-                logAudit("precio_alerta_corregida", "price_group", alert.priceGroupId ?? "", {
-                  priceTypeId: alert.priceTypeId,
-                  from: alert.currentUsd,
-                  to: alert.suggestedUsd,
-                });
-              });
-
-              /* Encolar **después** del `mutate` y celda por celda: el precio
-                 corregido sólo en local desaparece en el siguiente `/bootstrap`,
-                 que reemplaza el catálogo completo. Es el mismo agujero que
-                 tapó `product.create/update`, y aquí es plata directa: este
-                 botón es el que sube las tortas frías a su precio objetivo.
-
-                 Se encola lo que `applyPriceAlertFix` dice que cambió, no lo que
-                 la alerta pedía: si el grupo ya no existe no cambió nada y no
-                 hay nada que mandar. */
-              for (const t of fixed) {
-                if (t.scope === "group")
-                  queuePriceGroupPriceSet(t.priceGroupId, t.priceTypeId, t.amount);
-                else queueProductPriceSet(t.productId, t.priceTypeId, t.amount);
-              }
-
-              toast.success(`Precio actualizado a ${usd(alert.suggestedUsd)}`);
-            }}
-          >
-            Subir a {usd(alert.suggestedUsd)}
-          </Btn>
-        )}
-      </div>
-    </Aviso>
-  );
-}
-
-/**
- * Precios de las 3 unidades de precio de tortas frías (el genérico y los dos
- * diferenciados). Cada unidad de precio agrupa uno o más productos que
- * comparten el mismo precio; hoy cada grupo tiene un único producto, pero el
- * agrupamiento se mantiene por si en el futuro se agregan más productos al
- * mismo grupo. Este es el único lugar donde tiene sentido cambiar el precio
- * de un grupo: el formulario de un producto individual ya no tiene efecto
- * sobre la venta (ver aviso en `ProductForm`).
- */
-function PreciosAgrupados({ canEdit }: { canEdit: boolean }) {
-  const s = useAppState();
-  const groups = coldCakePriceGroups(s);
-
-  return (
-    <Card>
-      <CardHead
-        title="Precios agrupados"
-        sub="Editar aquí cambia el precio de todos los productos que comparten este grupo de precio."
-      />
-      {groups.length === 0 ? (
-        <Empty title="Sin grupos de precio" sub="Aún no hay unidades de precio configuradas." />
-      ) : (
-        <div className="divide-y divide-border">
-          {groups.map(({ group, products }) => (
-            <div
-              key={group.id}
-              className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
-            >
-              <div className="min-w-0">
-                <p className="text-sm font-medium">{group.name}</p>
-                <p className="text-xs text-muted-foreground">
-                  {products.length} producto{products.length === 1 ? "" : "s"} con este precio
-                </p>
-              </div>
-              <div className="grid grid-cols-2 gap-2 sm:flex sm:shrink-0">
-                {s.priceTypes.map((pt) => {
-                  const amount = group.prices.find((x) => x.priceTypeId === pt.id)?.amount ?? 0;
-                  return (
-                    <Field key={pt.id} label={pt.name}>
-                      <Input
-                        key={`${group.id}-${pt.id}-${amount}`}
-                        className="num sm:w-28"
-                        inputMode="decimal"
-                        disabled={!canEdit}
-                        defaultValue={String(amount)}
-                        onBlur={(e) => {
-                          const v = parseFloat(e.target.value.replace(",", ".")) || 0;
-                          if (v === amount) return;
-                          // El contrato exige un precio ≥ 0 (`@Min(0)` en
-                          // `SetPriceDto`) y un negativo sería un rechazo
-                          // **permanente**: la mutación sale de la cola y la
-                          // corrección se queda sólo en este navegador. Se para
-                          // aquí, antes de tocar el estado.
-                          if (v < 0) return toast.error("El precio no puede ser negativo");
-
-                          let queued = false;
-                          mutate((st) => {
-                            queued = setPriceGroupAmount(st, group.id, pt.id, v);
-                            logAudit("precio_grupo_editado", "price_group", group.id, {
-                              priceTypeId: pt.id,
-                              from: amount,
-                              to: v,
-                            });
-                          });
-
-                          /* Una mutación por la celda `(grupo, tipo de precio)`
-                             que se acaba de tocar, y sólo por esa: cada `Input`
-                             de esta rejilla es una celda independiente y el
-                             servidor resuelve el conflicto por celda, así que
-                             mandar las demás pisaría con valores viejos la
-                             corrección que otra caja hizo en paralelo. */
-                          if (queued) queuePriceGroupPriceSet(group.id, pt.id, v);
-
-                          toast.success(`Precio de "${group.name}" actualizado a ${usd(v)}`);
-                        }}
-                      />
-                    </Field>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </Card>
-  );
-}
-
 function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () => void }) {
   const s = useAppState();
   const [f, setF] = useState<Partial<Product>>({ ...draft });
@@ -475,10 +323,15 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
     const rest = (f.prices ?? []).filter((x) => x.priceTypeId !== ptId);
     setF({ ...f, prices: [...rest, { priceTypeId: ptId, amount: v }] });
   };
-  const priceGroup = f.priceGroupId ? s.priceGroups.find((g) => g.id === f.priceGroupId) : null;
-  const priceGroupMemberCount = priceGroup
-    ? s.products.filter((p) => p.priceGroupId === priceGroup.id).length
-    : 0;
+  /* El genérico de tortas frías es el único producto con alerta de precio bajo.
+     El aviso es **informativo y no bloquea**: su precio se edita aquí como el de
+     cualquier otro producto (la indirección del grupo de precio desapareció en
+     el esquema 6); lo único que hace la regla es avisar cuando el equivalente en
+     USD se queda corto. Se mira el producto ya guardado, no el borrador: es el
+     que evalúa `priceAlerts`. */
+  const guardado = f.id ? s.products.find((p) => p.id === f.id) : undefined;
+  const conAlerta = !!guardado && isGenericColdCake(guardado);
+  const regla = companyPriceRule(s);
 
   return (
     <div className="grid gap-3 sm:grid-cols-2">
@@ -527,43 +380,39 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
           onChange={(e) => setF({ ...f, minStock: parseFloat(e.target.value) || 0 })}
         />
       </Field>
-      <div className="sm:col-span-2">
-        {priceGroup ? (
-          <Aviso tone="amber" icon={IcoAlerta} title="Precio gestionado por grupo">
-            Este producto pertenece al grupo de precio «{priceGroup.name}». Su precio de venta lo
-            dicta ese grupo, no el precio propio de abajo — edítalo desde la pestaña{" "}
-            <strong>Precios</strong> de esta sección para que aplique a los{" "}
-            {priceGroupMemberCount} producto{priceGroupMemberCount === 1 ? "" : "s"} del grupo a
-            la vez.
+      {conAlerta && (
+        <div className="sm:col-span-2">
+          <Aviso tone="amber" icon={IcoAlerta} title="Este producto tiene alerta de precio bajo">
+            Si su precio se queda por debajo de {usd(regla.minUsd)} —también porque suba la tasa,
+            sin que nadie lo edite— aparece un aviso para subirlo a {usd(regla.targetUsd)}. El
+            mínimo y el objetivo se configuran en <strong>Ajustes · Impresión y numeración</strong>.
+            Nada de esto bloquea la venta ni la edición del precio.
           </Aviso>
-        ) : (
-          <>
-            <p className="mb-2 text-xs font-medium text-muted-foreground">Precios por tipo (USD)</p>
-            <div className="grid gap-2 sm:grid-cols-3">
-              {s.priceTypes.map((pt) => (
-                <Field key={pt.id} label={pt.name}>
-                  <Input
-                    className="num"
-                    inputMode="decimal"
-                    // Input NO controlado a propósito (`defaultValue`, no `value`):
-                    // si se ata `value` al número ya parseado, cada tecla dispara un
-                    // re-render que reformatea `f.prices` de vuelta a texto y le pisa
-                    // al usuario lo que acaba de teclear (el punto decimal, un cero
-                    // final) antes de que pueda seguir escribiendo — con montos en
-                    // USD eso hacía prácticamente imposible escribir centavos y podía
-                    // terminar guardando un número muy distinto al tecleado. `f.prices`
-                    // sigue siendo la fuente de verdad para "Guardar": `onChange` la
-                    // sigue actualizando, sólo dejó de retroalimentar el campo.
-                    defaultValue={String(price(pt.id))}
-                    onChange={(e) =>
-                      setPrice(pt.id, parseFloat(e.target.value.replace(",", ".")) || 0)
-                    }
-                  />
-                </Field>
-              ))}
-            </div>
-          </>
-        )}
+        </div>
+      )}
+      <div className="sm:col-span-2">
+        <p className="mb-2 text-xs font-medium text-muted-foreground">Precios por tipo (USD)</p>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {s.priceTypes.map((pt) => (
+            <Field key={pt.id} label={pt.name}>
+              <Input
+                className="num"
+                inputMode="decimal"
+                // Input NO controlado a propósito (`defaultValue`, no `value`):
+                // si se ata `value` al número ya parseado, cada tecla dispara un
+                // re-render que reformatea `f.prices` de vuelta a texto y le pisa
+                // al usuario lo que acaba de teclear (el punto decimal, un cero
+                // final) antes de que pueda seguir escribiendo — con montos en
+                // USD eso hacía prácticamente imposible escribir centavos y podía
+                // terminar guardando un número muy distinto al tecleado. `f.prices`
+                // sigue siendo la fuente de verdad para "Guardar": `onChange` la
+                // sigue actualizando, sólo dejó de retroalimentar el campo.
+                defaultValue={String(price(pt.id))}
+                onChange={(e) => setPrice(pt.id, parseFloat(e.target.value.replace(",", ".")) || 0)}
+              />
+            </Field>
+          ))}
+        </div>
       </div>
       <Field label="Sólo en bolívares">
         <Select
@@ -630,8 +479,6 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
                 if (ex) {
                   stockBefore = ex.stock;
                   Object.assign(ex, f);
-                  // Si pasó a una familia con precio general, hereda el grupo.
-                  attachDefaultPriceGroup(st, ex);
                   edited = ex;
                 }
                 logAudit("producto_editado", "product", f.id);
@@ -651,7 +498,6 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
                   prices: f.prices ?? [],
                   createdAt: new Date().toISOString(),
                 };
-                attachDefaultPriceGroup(st, p);
                 st.products.unshift(p);
                 created = p;
                 logAudit("producto_creado", "product", p.id);
@@ -659,9 +505,9 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
             });
 
             /* Encolar va **después** del `mutate`, con el producto ya en su forma
-               final (el grupo de precio que acaba de heredar incluido), y en este
-               orden: la cola se aplica en secuencia en el servidor, así que el
-               producto existe allí antes del movimiento que le fija la existencia.
+               final, y en este orden: la cola se aplica en secuencia en el
+               servidor, así que el producto existe allí antes del movimiento que
+               le fija la existencia.
 
                El `stock` no viaja en `product.create` ni en `product.update` —el
                servidor es la única fuente de verdad de la existencia y sólo la

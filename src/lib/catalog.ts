@@ -11,31 +11,18 @@ import {
   COLD_CAKE_CATEGORY_ID,
   COLD_CAKE_CATEGORY_NAME,
   COLD_CAKE_GENERIC_CODE,
-  COLD_CAKE_GENERIC_GROUP_ID,
   COLD_CAKE_GENERIC_NAME,
   COLD_CAKE_GENERIC_PRICES,
   COLD_CAKE_GENERIC_PRODUCT_ID,
-  COLD_CAKE_GENERIC_RULE,
   COLD_CAKE_LEGACY_FLAVORS,
-  COLD_CAKE_OREO_BROWNIE_GROUP_ID,
   COLD_CAKE_OREO_BROWNIE_PRICES,
-  COLD_CAKE_QUESILLO_GROUP_ID,
   COLD_CAKE_QUESILLO_PRICES,
   OREO_BROWNIE_CODE,
   OREO_BROWNIE_NAME,
   TORTA_QUESILLO_CODE,
   TORTA_QUESILLO_NAME,
 } from "./pricing-rules";
-import type {
-  AppState,
-  Category,
-  ID,
-  PriceAlert,
-  PriceGroup,
-  PriceRule,
-  Product,
-  ProductPrice,
-} from "./types";
+import type { AppState, Category, ID, PriceAlert, Product, ProductPrice } from "./types";
 
 /* ── Utilidades ───────────────────────────────────────── */
 
@@ -95,59 +82,6 @@ function legacyFlavorProducts(s: AppState): Product[] {
   );
 }
 
-function ensureGroup(
-  s: AppState,
-  spec: {
-    id: string;
-    name: string;
-    categoryId: string;
-    prices: ProductPrice[];
-    rule?: PriceRule;
-  },
-): PriceGroup {
-  let g = s.priceGroups.find((x) => x.id === spec.id);
-  if (!g) {
-    g = {
-      id: spec.id,
-      name: spec.name,
-      categoryId: spec.categoryId,
-      prices: spec.prices,
-      rule: spec.rule,
-      active: true,
-      createdAt: new Date().toISOString(),
-    };
-    s.priceGroups.push(g);
-    return g;
-  }
-  // Grupo existente: se respetan los precios que el negocio haya editado y
-  // sólo se reparan los metadatos estructurales. El nombre no es editable a
-  // mano desde la UI, así que reparar aquí es seguro: sólo alinea el grupo con
-  // la constante de negocio vigente (ver renombre "Oreo y Brownie" → "Brownie").
-  g.categoryId = spec.categoryId;
-  if (g.name !== spec.name) g.name = spec.name;
-  if (!g.prices.length) g.prices = spec.prices;
-  if (spec.rule && !g.rule) g.rule = spec.rule;
-  return g;
-}
-
-/* ── Invariante de agrupación ─────────────────────────── */
-
-/**
- * Garantiza la invariante "todo producto de una familia con precio general
- * pertenece a un grupo de precio". Llámala al crear o recategorizar un
- * producto (formulario de inventario, importación CSV): si cae en la categoría
- * de tortas frías y no trae grupo propio, hereda el precio general.
- *
- * Sin esto, un producto nuevo en esa categoría añadiría una cuarta unidad de
- * precio a una familia que debe tener exactamente tres.
- */
-export function attachDefaultPriceGroup(s: AppState, p: Product) {
-  if (p.priceGroupId) return;
-  if (p.categoryId !== s.company.coldCakeCategory) return;
-  if (!s.priceGroups?.some((g) => g.id === COLD_CAKE_GENERIC_GROUP_ID)) return;
-  p.priceGroupId = COLD_CAKE_GENERIC_GROUP_ID;
-}
-
 /* ── Consolidación de los sabores ─────────────────────── */
 
 /**
@@ -181,13 +115,14 @@ function collapseColdCakeFlavors(s: AppState, cat: Category): string[] {
     s.products.find((p) => p.categoryId === cat.id && normalizeName(p.name) === target) ??
     null;
 
-  /* Precio de arranque: el del grupo genérico si ya existe (el negocio pudo
-     haberlo editado) y si no el de los sabores. Así consolidar no cambia
-     ningún precio de venta. */
-  const groupPrices = s.priceGroups?.find((g) => g.id === COLD_CAKE_GENERIC_GROUP_ID)?.prices;
-  const inherited = groupPrices?.length
-    ? groupPrices
-    : (flavors.find((f) => f.prices.length)?.prices ?? null);
+  /* Precio de arranque: el de los sabores que se están consolidando, para que
+     consolidar no cambie ningún precio de venta.
+
+     Una instalación vieja pudo tener el precio en el grupo de precio en vez de
+     en el producto; de eso se encarga `toV6` (lib/migrations), que corre en la
+     misma pasada y vuelca los precios del grupo sobre el producto celda a
+     celda. Aquí no se lee ningún grupo: ya no existen. */
+  const inherited = flavors.find((f) => f.prices.length)?.prices ?? null;
 
   if (!generic) {
     const code = nextFreeCode(s, COLD_CAKE_GENERIC_CODE);
@@ -282,35 +217,33 @@ function collapseColdCakeFlavors(s: AppState, cat: Category): string[] {
 /* ── Familia de tortas frías ──────────────────────────── */
 
 /**
- * Deja la familia de tortas frías con **3 unidades de precio**, una por
- * producto:
+ * Deja la familia de tortas frías con **3 productos**, cada uno con su propio
+ * precio editable desde Inventario:
  *
  *   1. "Tortas Frías"    → producto único que reemplaza a los 13 sabores
  *   2. "Brownie"         → precio propio y diferenciado
  *   3. "Torta Quesillo"  → precio propio y diferenciado
  *
- * Los tres conservan la indirección de `PriceGroup` aunque tengan un solo
- * miembro: la UI de precios lista una fila por grupo, la regla con banda del
- * genérico vive en el grupo (ver `priceRuleOf` en lib/pricing) y cualquier
- * producto nuevo de la categoría hereda el precio general sin tocar código.
+ * Hasta el esquema 5 los tres compartían la indirección de un grupo de precio;
+ * desde el 6 el precio es del producto y punto (decisión del negocio: volver a
+ * precio manual por producto). De trasvasar los precios del grupo al producto en
+ * instalaciones existentes se encarga `toV6` en lib/migrations.
  *
  * Devuelve notas de lo que cambió, para registrarlas en la auditoría.
  */
 export function ensureColdCakeFamily(s: AppState): string[] {
   const notes: string[] = [];
-  if (!s.priceGroups) s.priceGroups = [];
 
-  /* 1 · Categoría de la familia */
-  const wantedId = s.company.coldCakeCategory || COLD_CAKE_CATEGORY_ID;
+  /* 1 · Categoría de la familia. Se busca por el id canónico y, si el negocio la
+     renombró o la creó con otro id, por nombre normalizado. */
   let cat: Category | undefined =
-    s.categories.find((c) => c.id === wantedId) ??
+    s.categories.find((c) => c.id === COLD_CAKE_CATEGORY_ID) ??
     s.categories.find((c) => normalizeName(c.name) === normalizeName(COLD_CAKE_CATEGORY_NAME));
   if (!cat) {
-    cat = { id: wantedId, name: COLD_CAKE_CATEGORY_NAME, active: true };
+    cat = { id: COLD_CAKE_CATEGORY_ID, name: COLD_CAKE_CATEGORY_NAME, active: true };
     s.categories.push(cat);
     notes.push(`categoría "${COLD_CAKE_CATEGORY_NAME}" creada`);
   }
-  s.company.coldCakeCategory = cat.id;
 
   /* 2 · Torta Quesillo: entra a la familia conservando su precio */
   const quesillo =
@@ -348,63 +281,15 @@ export function ensureColdCakeFamily(s: AppState): string[] {
     if (oreo.name !== OREO_BROWNIE_NAME) oreo.name = OREO_BROWNIE_NAME;
   }
 
-  /* 4 · Producto único de sabores: se crea y se retiran los 13 individuales.
-     Va antes de los grupos porque el precio del grupo genérico se toma de él. */
+  /* 4 · Producto único de sabores: se crea y se retiran los 13 individuales. */
   notes.push(...collapseColdCakeFlavors(s, cat));
 
-  /* 5 · Las tres unidades de precio.
-     El precio del grupo se toma del producto que ya lo tenía, para que agrupar
-     no cambie ningún precio de venta en instalaciones existentes. */
-  const genericSample = s.products.find(
-    (p) =>
-      p.categoryId === cat!.id && p.id !== quesillo?.id && p.id !== oreo!.id && p.prices.length > 0,
-  );
-  const generic = ensureGroup(s, {
-    id: COLD_CAKE_GENERIC_GROUP_ID,
-    name: COLD_CAKE_CATEGORY_NAME,
-    categoryId: cat.id,
-    prices: genericSample
-      ? genericSample.prices.map((x) => ({ ...x }))
-      : spreadPrices(s, COLD_CAKE_GENERIC_PRICES),
-    rule: COLD_CAKE_GENERIC_RULE,
-  });
-
-  const oreoGroup = ensureGroup(s, {
-    id: COLD_CAKE_OREO_BROWNIE_GROUP_ID,
-    name: OREO_BROWNIE_NAME,
-    categoryId: cat.id,
-    prices: oreo.prices.length
-      ? oreo.prices.map((x) => ({ ...x }))
-      : spreadPrices(s, COLD_CAKE_OREO_BROWNIE_PRICES),
-  });
-
-  const quesilloGroup = ensureGroup(s, {
-    id: COLD_CAKE_QUESILLO_GROUP_ID,
-    name: TORTA_QUESILLO_NAME,
-    categoryId: cat.id,
-    prices: quesillo?.prices.length
-      ? quesillo.prices.map((x) => ({ ...x }))
-      : spreadPrices(s, COLD_CAKE_QUESILLO_PRICES),
-  });
-
-  /* 6 · Asignación. Los diferenciados primero, para que el barrido del
-     genérico no se los lleve. */
-  oreo.priceGroupId = oreoGroup.id;
-  if (quesillo) quesillo.priceGroupId = quesilloGroup.id;
-
-  let grouped = 0;
-  for (const p of s.products) {
-    if (p.categoryId !== cat.id) continue;
-    if (p.id === oreo.id || p.id === quesillo?.id) continue;
-    // Respeta cualquier unidad de precio que el negocio ya le haya asignado.
-    if (p.priceGroupId) continue;
-    p.priceGroupId = generic.id;
-    grouped++;
-  }
-  if (grouped)
-    notes.push(
-      `${grouped} producto${grouped === 1 ? "" : "s"} bajo el precio general "${generic.name}"`,
-    );
+  /* 5 · Precio de respaldo de los diferenciados, sólo si llegaron sin ninguno
+     (un producto recién creado por esta misma función ya lo trae). Nunca se
+     pisa un precio existente: es dinero que el negocio configuró. */
+  if (!oreo.prices.length) oreo.prices = spreadPrices(s, COLD_CAKE_OREO_BROWNIE_PRICES);
+  if (quesillo && !quesillo.prices.length)
+    quesillo.prices = spreadPrices(s, COLD_CAKE_QUESILLO_PRICES);
 
   return notes;
 }
@@ -412,75 +297,49 @@ export function ensureColdCakeFamily(s: AppState): string[] {
 /* ── Corrección de alertas de precio ─────────────────────── */
 
 /**
- * Fija el precio de un tipo de precio concreto dentro de un `PriceGroup`.
- * Único mutador de `PriceGroup.prices`: úsalo en vez de tocar el arreglo a
- * mano para no duplicar la lógica de "reemplazar o agregar" en cada pantalla.
- */
-export function setPriceGroupAmount(
-  s: AppState,
-  groupId: string,
-  priceTypeId: string,
-  amount: number,
-): boolean {
-  const g = s.priceGroups?.find((x) => x.id === groupId);
-  if (!g) return false;
-  const existing = g.prices.find((x) => x.priceTypeId === priceTypeId);
-  if (existing) existing.amount = amount;
-  else g.prices.push({ priceTypeId, amount });
-  return true;
-}
-
-/**
- * Celda de precio que `applyPriceAlertFix` cambió de verdad.
+ * Lo que `applyPriceAlertFix` cambió de verdad, con el valor anterior.
  *
  * Existe para que quien llama pueda **encolar la mutación de sincronización que
- * le toca a cada celda** sin volver a deducir por qué rama pasó la corrección.
- * La celda `(grupo | producto, tipo de precio)` es la unidad de conflicto del
- * backend, así que es también la unidad que se reporta: nada de "algo cambió".
+ * le toca** y auditar el cambio sin volver a deducir por qué rama pasó la
+ * corrección. Las dos ramas escriben en sitios distintos del backend y por eso
+ * se distinguen aquí y no en la pantalla:
+ *
+ *  · `usd` → celda `(producto, tipo de precio)` ⇒ `productPrice.set`
+ *  · `bs`  → `bsPrice` del producto ⇒ `product.update` con `bsOnly` + `bsPrice`
  */
 export type PriceFixTarget =
-  | { scope: "group"; priceGroupId: ID; priceTypeId: ID; amount: number }
-  | { scope: "product"; productId: ID; priceTypeId: ID; amount: number };
+  | { mode: "usd"; productId: ID; priceTypeId: ID; amountUsd: number; fromUsd: number }
+  | { mode: "bs"; productId: ID; bsPrice: number; fromBs: number };
 
 /**
- * Aplica la corrección que pide una `PriceAlert`: sube el precio del tipo de
- * precio alertado a `alert.suggestedUsd`. Si la alerta viene de un grupo
- * (caso normal: el genérico "Tortas Frías"), corrige sólo ese grupo. Si por
- * alguna razón el producto alertado no pertenece a ningún grupo (categoría de
- * tortas frías sin agrupar, caso residual), corrige el precio propio de cada
- * producto afectado para no dejar la alerta sin acción posible.
+ * Aplica la corrección que pide una `PriceAlert` con el monto que confirmó el
+ * usuario (el sugerido si no lo tocó).
  *
- * Devuelve las celdas que cambiaron —lista vacía si no cambió ninguna— porque el
+ * Devuelve lo que cambió, o null si no cambió nada (el producto ya no existe, o
+ * la alerta venía sin tipo de precio). Quien llama **tiene que** encolarlo: un
  * precio corregido sólo en local se pierde en el siguiente `/bootstrap`, que
- * reemplaza el catálogo completo. Quien llama **tiene que** encolarlas.
+ * reemplaza el catálogo completo.
+ *
+ * `amount` va en la moneda del modo: USD en `usd`, Bs en `bs`.
  */
-export function applyPriceAlertFix(s: AppState, alert: PriceAlert): PriceFixTarget[] {
-  if (alert.priceGroupId) {
-    const ok = setPriceGroupAmount(s, alert.priceGroupId, alert.priceTypeId, alert.suggestedUsd);
-    return ok
-      ? [
-          {
-            scope: "group",
-            priceGroupId: alert.priceGroupId,
-            priceTypeId: alert.priceTypeId,
-            amount: alert.suggestedUsd,
-          },
-        ]
-      : [];
+export function applyPriceAlertFix(
+  s: AppState,
+  alert: PriceAlert,
+  amount: number,
+): PriceFixTarget | null {
+  const p = s.products.find((x) => x.id === alert.productId);
+  if (!p) return null;
+
+  if (alert.mode === "bs") {
+    const fromBs = p.bsPrice ?? 0;
+    p.bsPrice = amount;
+    return { mode: "bs", productId: p.id, bsPrice: amount, fromBs };
   }
-  const touched: PriceFixTarget[] = [];
-  for (const id of alert.productIds) {
-    const p = s.products.find((x) => x.id === id);
-    if (!p) continue;
-    const existing = p.prices.find((x) => x.priceTypeId === alert.priceTypeId);
-    if (existing) existing.amount = alert.suggestedUsd;
-    else p.prices.push({ priceTypeId: alert.priceTypeId, amount: alert.suggestedUsd });
-    touched.push({
-      scope: "product",
-      productId: p.id,
-      priceTypeId: alert.priceTypeId,
-      amount: alert.suggestedUsd,
-    });
-  }
-  return touched;
+
+  if (!alert.priceTypeId) return null;
+  const cell = p.prices.find((x) => x.priceTypeId === alert.priceTypeId);
+  const fromUsd = cell?.amount ?? 0;
+  if (cell) cell.amount = amount;
+  else p.prices.push({ priceTypeId: alert.priceTypeId, amount });
+  return { mode: "usd", productId: p.id, priceTypeId: alert.priceTypeId, amountUsd: amount, fromUsd };
 }

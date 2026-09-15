@@ -16,7 +16,6 @@ import {
   itemsTotals,
   lineBs,
   orderBalance,
-  priceBandCheck,
   priceOf,
   unitBs,
 } from "@/lib/business";
@@ -145,14 +144,23 @@ export function POS({
       setCustomizeFor(p);
       return;
     }
-    const unit = p.bsOnly ? 0 : priceOf(s, p, priceTypeId);
-    // Sólo bloquean los grupos de precio que declaran banda (el precio general
-    // de tortas frías); los sabores diferenciados quedan fuera a propósito.
-    const chk = priceBandCheck(s, p, unit, rate);
-    if (chk.enforced && !chk.ok) {
-      toast.error(`Precio fuera del rango $${chk.min} – $${chk.max} para ${p.name}`);
+    /* Sin tasa BCV no se puede armar ninguna línea: el equivalente en Bs —el que
+       se asienta en la venta, en el cierre y en el ticket— sale de la tasa para
+       cualquier producto, no sólo los de precio fijo en Bs. Se para aquí y no al
+       cobrar para no dejar al cajero montar el carrito entero antes del "no".
+       `createSale` conserva el mismo guard como última línea de defensa (una
+       venta puede llegar por otro camino), así que esto no lo sustituye.
+       Decisión del dueño del negocio: bloquea toda venta, alineado con el mismo
+       guard del backend. Sustituye a la validación de banda del esquema ≤5, que
+       en la práctica sólo llegaba a bloquear en este mismo caso pero lo
+       explicaba como un problema de rango. */
+    if (money.missing) {
+      toast.error(`No hay tasa BCV vigente: no se puede vender "${p.name}"`, {
+        description: "Carga la tasa del día en Mercado y vuelve a intentarlo.",
+      });
       return;
     }
+    const unit = p.bsOnly ? 0 : priceOf(s, p, priceTypeId);
     const extra = customization ? (p.customizationPrice ?? 0) : 0;
     setItems((prev) => {
       const key = p.id + "|" + priceTypeId + "|" + (customization ?? "");
@@ -724,6 +732,7 @@ export function POS({
             customerId: customer?.id ?? initialCustomerId ?? null,
             customerName: displayCustomerName,
             payments,
+            note,
             orderId,
           });
           if (!res.ok) return toast.error(res.error!);

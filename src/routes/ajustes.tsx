@@ -23,10 +23,9 @@ import {
   Select,
 } from "@/components/ui-kit";
 import { getState, logAudit, mutate, resetDatabase, useAppState } from "@/lib/store";
-import { attachDefaultPriceGroup } from "@/lib/catalog";
 import { categoryErrorText, createCategory, useCategoryAccess } from "@/lib/sync/categories";
 import { uid } from "@/lib/seed";
-import { dt, num } from "@/lib/format";
+import { dt, num, usd } from "@/lib/format";
 import { ALL_PERMISSIONS, type Permission, type User } from "@/lib/types";
 import { useSession } from "@/lib/auth";
 
@@ -665,7 +664,10 @@ function Impresion() {
             onChange={(e) => setF({ ...f, bsRounding: parseFloat(e.target.value) || 1 })}
           />
         </Field>
-        <Field label="Tortas frías · mínimo USD">
+        <Field
+          label="Tortas frías · mínimo USD"
+          hint="Por debajo de esto, el genérico de tortas frías avisa que hay que subirlo."
+        >
           <Input
             className="num"
             inputMode="decimal"
@@ -679,7 +681,10 @@ function Impresion() {
             }
           />
         </Field>
-        <Field label="Tortas frías · máximo USD">
+        <Field
+          label="Tortas frías · máximo USD"
+          hint="El precio al que la alerta pide subirlo. No puede ser menor que el mínimo."
+        >
           <Input
             className="num"
             inputMode="decimal"
@@ -689,22 +694,24 @@ function Impresion() {
             }
           />
         </Field>
-        <Field label="Categoría de tortas frías">
-          <Select
-            value={f.coldCakeCategory}
-            onChange={(e) => setF({ ...f, coldCakeCategory: e.target.value })}
-          >
-            {s.categories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </Select>
-        </Field>
         <div className="sm:col-span-2">
           <Btn
             variant="amber"
             onClick={() => {
+              /* Un máximo por debajo del mínimo deja la regla sin sentido: la
+                 alerta pediría "sube el precio" a un valor que la vuelve a
+                 disparar. `companyPriceRule` dejó de corregirlo en silencio a
+                 propósito, así que el error se para aquí, que es donde el
+                 usuario puede arreglarlo. */
+              if (!Number.isFinite(f.coldCakeMin) || !Number.isFinite(f.coldCakeMax))
+                return toast.error("El mínimo y el máximo de tortas frías deben ser números");
+              if (f.coldCakeMin < 0 || f.coldCakeMax < 0)
+                return toast.error("El mínimo y el máximo de tortas frías no pueden ser negativos");
+              if (f.coldCakeMax < f.coldCakeMin)
+                return toast.error(
+                  `El máximo de tortas frías (${usd(f.coldCakeMax)}) no puede ser menor que el mínimo (${usd(f.coldCakeMin)})`,
+                );
+
               mutate((st) => {
                 st.company = { ...st.company, ...f };
               });
@@ -799,7 +806,6 @@ function Datos() {
         }));
         if (existing) {
           Object.assign(existing, { name: name.trim(), categoryId: cat.id, prices });
-          attachDefaultPriceGroup(st, existing);
         } else {
           const nuevo = {
             id: uid(),
@@ -812,8 +818,6 @@ function Datos() {
             prices,
             createdAt: new Date().toISOString(),
           };
-          // Mantiene la invariante de las familias con precio general.
-          attachDefaultPriceGroup(st, nuevo);
           st.products.push(nuevo);
         }
         count++;

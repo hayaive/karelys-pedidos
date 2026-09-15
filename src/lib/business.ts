@@ -7,7 +7,7 @@ import {
   orderBalance,
   type NewDepositInput,
 } from "./orders";
-import { itemsTotals, priceBandCheck, rateSnapshot } from "./pricing";
+import { isGenericColdCake, itemsTotals, rateSnapshot } from "./pricing";
 import { getState, logAudit, mutate } from "./store";
 import { newId } from "./ids";
 import {
@@ -43,24 +43,18 @@ import type {
  */
 export {
   bcvRate,
-  coldCakeCheck,
-  coldCakePriceGroups,
   companyPriceRule,
   currentRate,
-  isColdCake,
+  isGenericColdCake,
   itemsTotals,
   lineBs,
   moneyOf,
   moneyOfSale,
-  ownPriceOf,
   priceAlertOf,
   priceAlerts,
-  priceBandCheck,
-  priceGroupOf,
   priceOf,
   priceRuleOf,
   rateSnapshot,
-  resolvePrices,
   totalsOf,
   unitBs,
 } from "./pricing";
@@ -218,19 +212,21 @@ export function createSale(input: {
   if (Math.abs(paid - totalUsd) > 0.02 && paid < totalUsd)
     return { ok: false, error: "Los pagos no cubren el total de la venta" };
 
-  // Banda de precio: sólo bloquean los grupos que declaran una (el precio
-  // general de tortas frías). Los sabores con precio propio y diferenciado
-  // viven por encima de esa banda a propósito y no se validan contra ella.
-  for (const it of input.items) {
-    const p = s.products.find((x) => x.id === it.productId);
-    if (!p) continue;
-    const chk = priceBandCheck(s, p, it.unitPriceUsd, snap.usd);
-    if (chk.enforced && !chk.ok)
-      return {
-        ok: false,
-        error: `"${it.name}" queda fuera del rango permitido de $${chk.min} – $${chk.max}`,
-      };
-  }
+  /* Tasa BCV: sin tasa vigente ninguna venta se puede asentar de forma confiable
+     — el cierre de caja no cuadra y el ticket no se puede reimprimir con el
+     equivalente correcto, sea o no la venta de un producto con precio en Bs.
+     Bloquea toda venta, no sólo la del genérico de tortas frías (decisión del
+     dueño del negocio, alineada con el mismo guard del backend).
+
+     Esto sustituye a la validación de banda del esquema ≤5, que en la práctica
+     sólo llegaba a bloquear en este mismo caso (el algoritmo corregía el precio
+     dentro del rango antes de comprobarlo) pero lo explicaba con un mensaje de
+     rango que no decía lo que de verdad pasaba. */
+  if (money.missing)
+    return {
+      ok: false,
+      error: "No se puede vender sin una tasa BCV vigente. Actualízala en Mercado.",
+    };
 
   let sale: Sale | undefined;
   mutate((st) => {

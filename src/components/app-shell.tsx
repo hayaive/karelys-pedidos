@@ -1,5 +1,5 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode, type SyntheticEvent } from "react";
 import {
   IcoAjustes,
   IcoAtajos,
@@ -182,7 +182,7 @@ export function AppShell({ children, requires }: { children: ReactNode; requires
           )}
         </div>
 
-        <nav className="flex-1 overflow-y-auto pb-2">
+        <nav className="rail-scroll flex-1 overflow-y-auto overflow-x-hidden pb-2">
           {nav.map((n) => (
             <EnlaceRail
               key={n.to}
@@ -430,13 +430,24 @@ function EnlaceRail({
   active: boolean;
   colapsado: boolean;
 }) {
+  // El tooltip del rail colapsado vive en `position: fixed`, calculado en
+  // px al mostrarse (no `absolute` con `left-full`): el `<nav>` que lo
+  // contiene tiene `overflow-y-auto`, y un hijo `absolute` que sobresale del
+  // ancho del rail fuerza ahí un scroll horizontal fantasma (el navegador
+  // convierte overflow-x a `auto` en cuanto overflow-y deja de ser
+  // `visible`). `fixed` no cuenta para el overflow de sus ancestros.
+  const { pos, visible, mostrar, ocultar } = useTooltipFijo();
   return (
     <Link
       to={to}
       aria-label={colapsado ? label : undefined}
       aria-current={active ? "page" : undefined}
+      onMouseEnter={colapsado ? mostrar : undefined}
+      onMouseLeave={colapsado ? ocultar : undefined}
+      onFocus={colapsado ? mostrar : undefined}
+      onBlur={colapsado ? ocultar : undefined}
       className={cn(
-        "group relative flex items-center py-[0.55rem] text-[14px] transition-colors duration-[140ms] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sol/60 focus-visible:ring-inset",
+        "relative flex items-center py-[0.55rem] text-[14px] transition-colors duration-[140ms] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sol/60 focus-visible:ring-inset",
         colapsado ? "justify-center px-0" : "gap-3 px-5",
         active ? "bg-[#2E251A] text-[#F2EADE]" : "text-[#C4B7A4] hover:bg-[#1F1810]",
       )}
@@ -451,8 +462,54 @@ function EnlaceRail({
       {active && !colapsado && (
         <span aria-hidden className="size-1.5 flex-none rounded-full bg-sol" />
       )}
-      {colapsado && <EtiquetaFlotante>{label}</EtiquetaFlotante>}
+      {colapsado && pos && (
+        <TooltipFijo pos={pos} visible={visible}>
+          {label}
+        </TooltipFijo>
+      )}
     </Link>
+  );
+}
+
+/** Calcula, en píxeles de viewport, dónde debe aparecer el tooltip fijo de un
+ *  ítem del rail colapsado. Se recalcula en cada hover/foco a partir del
+ *  elemento que disparó el evento, así que sigue siendo correcto aunque el
+ *  `<nav>` esté scrolleado. */
+function useTooltipFijo() {
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const [visible, setVisible] = useState(false);
+  const mostrar = (e: SyntheticEvent<HTMLElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    setPos({ top: r.top + r.height / 2, left: r.right + 8 });
+    setVisible(true);
+  };
+  const ocultar = () => setVisible(false);
+  return { pos, visible, mostrar, ocultar };
+}
+
+/** El tooltip del rail colapsado, en `position: fixed`: no le suma overflow
+ *  a ningún contenedor con scroll, sin importar dónde viva en el árbol. */
+function TooltipFijo({
+  pos,
+  visible,
+  children,
+}: {
+  pos: { top: number; left: number };
+  visible: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <span
+      role="tooltip"
+      aria-hidden
+      className={cn(
+        "pointer-events-none fixed z-50 -translate-y-1/2 whitespace-nowrap rounded-md border border-rail-linea bg-rail-2 px-2.5 py-1 text-[12px] text-rail-texto shadow-2 transition-opacity duration-150",
+        visible ? "opacity-100" : "opacity-0",
+      )}
+      style={{ top: pos.top, left: pos.left }}
+    >
+      {children}
+    </span>
   );
 }
 

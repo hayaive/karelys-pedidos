@@ -19,6 +19,7 @@ import { Route as InventarioRouteImport } from './routes/inventario'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as PedidosRouteImport } from './routes/pedidos'
 import { Route as VentaRouteImport } from './routes/venta'
+import { Route as ApiVersionRouteImport } from './routes/api/version'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -70,6 +71,11 @@ const VentaRoute = VentaRouteImport.update({
   path: '/venta',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiVersionRoute = ApiVersionRouteImport.update({
+  id: '/api/version',
+  path: '/api/version',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -82,6 +88,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/pedidos': typeof PedidosRoute
   '/venta': typeof VentaRoute
+  '/api/version': typeof ApiVersionRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -94,6 +101,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/pedidos': typeof PedidosRoute
   '/venta': typeof VentaRoute
+  '/api/version': typeof ApiVersionRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -107,6 +115,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/pedidos': typeof PedidosRoute
   '/venta': typeof VentaRoute
+  '/api/version': typeof ApiVersionRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -121,6 +130,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/pedidos'
     | '/venta'
+    | '/api/version'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -133,6 +143,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/pedidos'
     | '/venta'
+    | '/api/version'
   id:
     | '__root__'
     | '/'
@@ -145,6 +156,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/pedidos'
     | '/venta'
+    | '/api/version'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -158,6 +170,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   PedidosRoute: typeof PedidosRoute
   VentaRoute: typeof VentaRoute
+  ApiVersionRoute: typeof ApiVersionRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -232,6 +245,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof VentaRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/version': {
+      id: '/api/version'
+      path: '/api/version'
+      fullPath: '/api/version'
+      preLoaderRoute: typeof ApiVersionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -246,6 +266,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   PedidosRoute: PedidosRoute,
   VentaRoute: VentaRoute,
+  ApiVersionRoute: ApiVersionRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

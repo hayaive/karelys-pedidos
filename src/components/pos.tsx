@@ -724,6 +724,7 @@ export function POS({
             customerId: customer?.id ?? initialCustomerId ?? null,
             customerName: displayCustomerName,
             payments,
+            note,
             orderId,
           });
           if (!res.ok) return toast.error(res.error!);

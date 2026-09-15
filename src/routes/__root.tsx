@@ -11,6 +11,7 @@ import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { Toaster } from "@/components/ui/sonner";
+import { UpdateRequiredOverlay } from "@/components/update-required-overlay";
 import { useAutoRefreshRates } from "@/hooks/use-auto-refresh-rates";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { registerServiceWorker } from "../lib/register-service-worker";
@@ -149,6 +150,8 @@ function RootComponent() {
       {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
       <Outlet />
       <Toaster position="top-right" richColors closeButton />
+      {/* Por encima de todo, login incluido: bloqueo total cuando el bundle quedó desactualizado. */}
+      <UpdateRequiredOverlay />
     </QueryClientProvider>
   );
 }

@@ -35,6 +35,15 @@ self.addEventListener("install", (event) => {
   self.skipWaiting();
 });
 
+// Disparado por `src/lib/force-update.ts` cuando la pantalla obligatoria de
+// actualización pide adoptar la versión nueva ya instalada (estado
+// "waiting") sin esperar a que se cierren todas las pestañas viejas.
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
+});
+
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches

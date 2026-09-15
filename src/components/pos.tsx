@@ -184,6 +184,11 @@ export function POS({
       ];
     });
     setCustomizeFor(null);
+    // Colapsa la búsqueda de texto tras agregar: el resultado ya cumplió su
+    // propósito y debe quedar listo para el siguiente producto, no seguir
+    // mostrando la misma lista filtrada tapando el resto de la pantalla.
+    setQ("");
+    document.getElementById("pos-search")?.focus();
   }
 
   const setQty = (idx: number, qty: number) =>

@@ -34,7 +34,7 @@ export const COLD_CAKE_QUESILLO_GROUP_ID = "pg-torta-quesillo";
 export const OREO_BROWNIE_CODE = "P059";
 export const TORTA_QUESILLO_CODE = "P015";
 
-export const OREO_BROWNIE_NAME = "Oreo y Brownie";
+export const OREO_BROWNIE_NAME = "Brownie";
 export const TORTA_QUESILLO_NAME = "Torta Quesillo";
 
 /* ── Producto único de tortas frías ───────────────────── */
@@ -87,7 +87,7 @@ export const COLD_CAKE_GENERIC_PRICES = { mayor: 1.1, detal: 1.11 };
 
 /**
  * Precio de los dos diferenciados. "Torta Quesillo" conserva exactamente el
- * precio que tenía como postre (1,30 / 1,36). "Oreo y Brownie" es un producto
+ * precio que tenía como postre (1,30 / 1,36). "Brownie" es un producto
  * nuevo: se alinea al mismo escalón (revisar con el negocio).
  */
 export const COLD_CAKE_QUESILLO_PRICES = { mayor: 1.3, detal: 1.36 };

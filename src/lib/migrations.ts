@@ -11,16 +11,20 @@
  */
 
 import { ensureColdCakeFamily } from "./catalog";
+import { normalizeName } from "./ids";
 import {
   COLD_CAKE_ALERT_USD,
+  COLD_CAKE_OREO_BROWNIE_GROUP_ID,
   COLD_CAKE_TARGET_USD,
   DEFAULT_BS_ROUNDING,
   DEFAULT_RATE_MAX_AGE_HOURS,
+  OREO_BROWNIE_CODE,
+  OREO_BROWNIE_NAME,
 } from "./pricing-rules";
 import type { AppState } from "./types";
 
 /** Versión de esquema que entiende este código. */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 interface Migration {
   to: number;
@@ -122,10 +126,46 @@ function toV4(s: AppState): string[] {
   return [`método de pago "${name}" agregado`];
 }
 
+/**
+ * v4 → v5
+ *  · el producto y el grupo de precio "Oreo y Brownie" pasan a llamarse sólo
+ *    "Brownie" (decisión del negocio): en Precios Agrupados no debe existir
+ *    "Oreo y Brownie".
+ *
+ * Se busca primero por la clave de negocio estable (código de producto / id de
+ * grupo) y, si no calza, por el nombre viejo normalizado — igual que en
+ * `toV4` — para no crear un producto o grupo duplicado en una instalación que
+ * ya tenía el suyo con otro nombre. Idempotente: si ya está en "Brownie", no
+ * hace nada.
+ */
+function toV5(s: AppState): string[] {
+  const notes: string[] = [];
+  const legacyName = normalizeName("Oreo y Brownie");
+
+  const product =
+    s.products.find((p) => p.code === OREO_BROWNIE_CODE) ??
+    s.products.find((p) => normalizeName(p.name) === legacyName);
+  if (product && product.name !== OREO_BROWNIE_NAME) {
+    product.name = OREO_BROWNIE_NAME;
+    notes.push(`producto "${product.code}" renombrado a "${OREO_BROWNIE_NAME}"`);
+  }
+
+  const group =
+    s.priceGroups?.find((g) => g.id === COLD_CAKE_OREO_BROWNIE_GROUP_ID) ??
+    s.priceGroups?.find((g) => normalizeName(g.name) === legacyName);
+  if (group && group.name !== OREO_BROWNIE_NAME) {
+    group.name = OREO_BROWNIE_NAME;
+    notes.push(`grupo de precio "${group.id}" renombrado a "${OREO_BROWNIE_NAME}"`);
+  }
+
+  return notes;
+}
+
 const MIGRATIONS: Migration[] = [
   { to: 2, name: "price-groups-and-order-deposits", up: toV2 },
   { to: 3, name: "cold-cake-single-product", up: toV3 },
   { to: 4, name: "punto-de-venta-payment-method", up: toV4 },
+  { to: 5, name: "oreo-brownie-rename-to-brownie", up: toV5 },
 ];
 
 export interface MigrationResult {

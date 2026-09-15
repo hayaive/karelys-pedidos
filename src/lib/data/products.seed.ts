@@ -336,7 +336,7 @@ export const SEED_PRODUCTS: SeedProduct[] = [
     // No venía en el Excel original; precio alineado a "Torta Quesillo"
     // (pendiente de confirmar con el negocio).
     "code": "P059",
-    "name": "Oreo y Brownie",
+    "name": "Brownie",
     "category": "Tortas Frías",
     "mayor": 1.3,
     "detal": 1.36

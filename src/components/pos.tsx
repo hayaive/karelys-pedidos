@@ -254,6 +254,9 @@ export function POS({
         // dispositivo mientras el pedido seguía abierto. No retiramos la
         // línea sola (el usuario decide si la completa o la quita), pero
         // avisamos y evitamos que suba más la cantidad de algo sin stock.
+        // El cobro NO se bloquea: el negocio decide vender lo que el conteo
+        // dice que no hay y lo cuadra después con un ajuste de inventario
+        // (mismo criterio que ya usa el backend, ver inventory.service.ts).
         const lineProduct = s.products.find((pr) => pr.id === i.productId);
         const lineOutOfStock = lineProduct ? isOutOfStock(lineProduct) : false;
         return (

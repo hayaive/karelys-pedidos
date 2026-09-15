@@ -408,7 +408,7 @@ export function deleteOrder(id: ID): { ok: boolean; error?: string } {
   const s = getState();
   const order = s.orders.find((o) => o.id === id);
   if (!order) return { ok: false, error: "El pedido no existe" };
-  const balance = orderBalance(order);
+  const balance = orderBalance(s, order);
   if (balance.depositUsd > 0.001)
     return {
       ok: false,

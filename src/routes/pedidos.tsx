@@ -22,6 +22,7 @@ import { useAppState } from "@/lib/store";
 import {
   addOrderDeposit,
   deleteOrder,
+  itemsTotals,
   lineBs,
   orderBalance,
   setOrderStatus,
@@ -158,7 +159,14 @@ function Pedidos() {
       ) : (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {orders.map((o) => {
-            const balance = orderBalance(o);
+            const balance = orderBalance(s, o);
+            // El total en Bs del pedido, no `money.fmtBs(o.totalUsd)`: ese campo
+            // excluye a propósito las líneas `bsOnly` (torta fría), así que un
+            // pedido compuesto sólo por ellas mostraba siempre "0,00 Bs" aquí.
+            // `itemsTotals` sí las convierte con la tasa vigente (mismo patrón
+            // que usa el ticket); la referencia en USD usa `balance.totalUsd`,
+            // que por la misma razón ya no es `o.totalUsd`.
+            const { totalBs: orderTotalBs } = itemsTotals(o.items, money);
             return (
               <Card key={o.id} className="p-4">
                 <div className="flex items-start justify-between gap-2">
@@ -188,10 +196,10 @@ function Pedidos() {
                 )}
                 <p className="mt-3">
                   <span className="num block text-lg font-semibold">
-                    {money.fmtBs(o.totalUsd)}
+                    {money.fmtBsAmount(orderTotalBs)}
                   </span>
                   <span className="num block text-xs text-muted-foreground">
-                    {usd(o.totalUsd)}
+                    {usd(balance.totalUsd)}
                   </span>
                 </p>
                 <div className="mt-1.5 flex items-center justify-between gap-2">
@@ -331,7 +339,7 @@ function AddDeposit({ orderId, onClose }: { orderId: string; onClose: () => void
   const method = methods.find((m) => m.id === methodId);
 
   if (!order) return null;
-  const balance = orderBalance(order);
+  const balance = orderBalance(s, order);
 
   return (
     <div className="space-y-3">

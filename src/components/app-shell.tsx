@@ -3,6 +3,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import {
   IcoAjustes,
   IcoAtajos,
+  IcoChevron,
   IcoCierre,
   IcoClientes,
   IcoFacturacion,
@@ -41,6 +42,12 @@ export const NAV: { to: string; label: string; icon: Icono; perm: Permission | n
 /** En el teléfono sólo caben tres módulos: el resto vive en la hoja «Más». */
 const MOVIL_DIRECTOS = ["/", "/venta", "/pedidos"];
 
+/** Ancho del rail en escritorio: expandido y colapsado (solo íconos). La
+ *  banda de divisas fija al pie se alinea contra estas mismas constantes. */
+const RAIL_ANCHO = 236;
+const RAIL_ANCHO_COLAPSADO = 72;
+const RAIL_COLAPSADO_KEY = "karelys.rail-colapsado";
+
 export function useHydrated() {
   const [h, setH] = useState(false);
   useEffect(() => {
@@ -48,6 +55,22 @@ export function useHydrated() {
     setH(true);
   }, []);
   return h;
+}
+
+/** Preferencia de rail colapsado/expandido: por dispositivo, en localStorage. */
+function useRailColapsado() {
+  const [colapsado, setColapsado] = useState(false);
+  useEffect(() => {
+    if (localStorage.getItem(RAIL_COLAPSADO_KEY) === "1") setColapsado(true);
+  }, []);
+  const alternar = () => {
+    setColapsado((prev) => {
+      const next = !prev;
+      localStorage.setItem(RAIL_COLAPSADO_KEY, next ? "1" : "0");
+      return next;
+    });
+  };
+  return { colapsado, alternar };
 }
 
 /** El sello del cliente. Sin logo propio, un círculo con borde ámbar y las iniciales. */
@@ -86,6 +109,7 @@ export function AppShell({ children, requires }: { children: ReactNode; requires
   const pathname = useRouterState({ select: (st) => st.location.pathname });
   const [hoja, setHoja] = useState(false);
   const [mercado, setMercado] = useState(false);
+  const { colapsado, alternar: alternarRail } = useRailColapsado();
 
   useEffect(() => {
     if (hydrated && !user) navigate({ to: "/login" });
@@ -130,18 +154,32 @@ export function AppShell({ children, requires }: { children: ReactNode; requires
 
   return (
     <div className="flex min-h-screen bg-background">
-      {/* ── Barra lateral: 236 px, nunca se contrae ── */}
-      <aside className="sticky top-0 z-20 hidden h-screen w-[236px] shrink-0 flex-col border-r border-[#2E251A] bg-[#16110B] lg:flex">
+      {/* ── Barra lateral: 236 px expandida, 72 px colapsada. El estado se
+          guarda por dispositivo y el ancho transiciona con suavidad. ── */}
+      <aside
+        className="sticky top-0 z-20 hidden h-screen shrink-0 flex-col border-r border-[#2E251A] bg-[#16110B] transition-[width] duration-[220ms] ease-[var(--ease-menu)] lg:flex"
+        style={{ width: colapsado ? RAIL_ANCHO_COLAPSADO : RAIL_ANCHO }}
+      >
         {/* La marca del cliente: el sello encima, el nombre debajo y con permiso
-            para partirse en dos líneas. En 236 px no cabe en una sola. */}
-        <div className="px-5 pb-5 pt-6">
-          <Logo size={40} />
-          <p
-            className="mt-3 text-[17px] leading-[1.25] text-[#F2EADE]"
-            style={{ fontFamily: "'Fraunces', Georgia, serif", fontWeight: 600 }}
-          >
-            {s.company.name}
-          </p>
+            para partirse en dos líneas. En 236 px no cabe en una sola.
+            Colapsada, sólo el sello se centra; el nombre vive en el tooltip. */}
+        <div className={cn("pt-6", colapsado ? "flex flex-col items-center pb-4" : "px-5 pb-5")}>
+          {colapsado ? (
+            <div className="group relative flex w-full justify-center">
+              <Logo size={32} />
+              <EtiquetaFlotante>{s.company.name}</EtiquetaFlotante>
+            </div>
+          ) : (
+            <>
+              <Logo size={40} />
+              <p
+                className="mt-3 text-[17px] leading-[1.25] text-[#F2EADE]"
+                style={{ fontFamily: "'Fraunces', Georgia, serif", fontWeight: 600 }}
+              >
+                {s.company.name}
+              </p>
+            </>
+          )}
         </div>
 
         <nav className="flex-1 overflow-y-auto pb-2">
@@ -152,42 +190,104 @@ export function AppShell({ children, requires }: { children: ReactNode; requires
               label={n.label}
               icon={n.icon}
               active={isActive(pathname, n.to)}
+              colapsado={colapsado}
             />
           ))}
         </nav>
 
-        <div className="border-t border-[#2E251A] px-5 py-4">
-          <p className="mb-1 text-[13px] text-[#C4B7A4]">
-            {user.fullName} <span className="text-[#9B8D7B]">· {role?.name ?? "Sin rol"}</span>
-          </p>
+        <div
+          className={cn(
+            "border-t border-[#2E251A]",
+            colapsado ? "flex flex-col items-center gap-1 py-4" : "px-5 py-4",
+          )}
+        >
+          {colapsado ? (
+            <>
+              <div className="group relative flex w-full justify-center py-1">
+                <div className="grid size-8 place-items-center rounded-full border border-rail-linea bg-rail-2 text-[12px] font-[600] text-rail-texto-2">
+                  <span aria-hidden>{iniciales(user.fullName)}</span>
+                </div>
+                <span className="sr-only">
+                  {user.fullName} · {role?.name ?? "Sin rol"}
+                </span>
+                <EtiquetaFlotante>
+                  {user.fullName} · {role?.name ?? "Sin rol"}
+                </EtiquetaFlotante>
+              </div>
 
-          <button
-            onClick={() => {
-              logout();
-              navigate({ to: "/login" });
-            }}
-            className="inline-flex items-center gap-1.5 text-[12px] text-[#9B8D7B] transition-colors hover:text-[#C4B7A4]"
-          >
-            <IcoSalir /> Salir
-          </button>
+              <button
+                type="button"
+                onClick={() => {
+                  logout();
+                  navigate({ to: "/login" });
+                }}
+                aria-label="Salir"
+                className="group relative flex w-full items-center justify-center py-2 text-[#9B8D7B] transition-colors duration-[140ms] hover:text-[#C4B7A4] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sol/60"
+              >
+                <IcoSalir />
+                <EtiquetaFlotante>Salir</EtiquetaFlotante>
+              </button>
 
-          <p className="mt-3 text-[10px] uppercase tracking-[0.08em] text-[#9B8D7B]">
-            Sistema hecho por
-          </p>
-          <p
-            className="mt-1 flex items-center gap-2 text-[#F2EADE]"
-            style={{ fontFamily: "'Fraunces', Georgia, serif", fontWeight: 600, fontSize: 13 }}
-          >
-            HAYAI
-            <SelloSol />
-          </p>
-          <p
-            className="mt-1 text-[11px] text-[#9B8D7B]"
-            style={{ fontFamily: "'Geist Mono', ui-monospace, monospace" }}
-          >
-            v{VERSION}
-          </p>
+              <div className="group relative flex w-full justify-center pt-1 text-[#9B8D7B]">
+                <SelloSol />
+                <span className="sr-only">Sistema hecho por HAYAI, versión {VERSION}</span>
+                <EtiquetaFlotante>HAYAI · v{VERSION}</EtiquetaFlotante>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="mb-1 text-[13px] text-[#C4B7A4]">
+                {user.fullName} <span className="text-[#9B8D7B]">· {role?.name ?? "Sin rol"}</span>
+              </p>
+
+              <button
+                onClick={() => {
+                  logout();
+                  navigate({ to: "/login" });
+                }}
+                className="inline-flex items-center gap-1.5 text-[12px] text-[#9B8D7B] transition-colors hover:text-[#C4B7A4]"
+              >
+                <IcoSalir /> Salir
+              </button>
+
+              <p className="mt-3 text-[10px] uppercase tracking-[0.08em] text-[#9B8D7B]">
+                Sistema hecho por
+              </p>
+              <p
+                className="mt-1 flex items-center gap-2 text-[#F2EADE]"
+                style={{ fontFamily: "'Fraunces', Georgia, serif", fontWeight: 600, fontSize: 13 }}
+              >
+                HAYAI
+                <SelloSol />
+              </p>
+              <p
+                className="mt-1 text-[11px] text-[#9B8D7B]"
+                style={{ fontFamily: "'Geist Mono', ui-monospace, monospace" }}
+              >
+                v{VERSION}
+              </p>
+            </>
+          )}
         </div>
+
+        {/* El botón de colapso: a caballo del borde, siempre visible. */}
+        <button
+          type="button"
+          onClick={alternarRail}
+          aria-label={colapsado ? "Expandir barra lateral" : "Contraer barra lateral"}
+          aria-expanded={!colapsado}
+          className="absolute -right-3 top-1/2 z-30 grid size-6 -translate-y-1/2 place-items-center rounded-full border border-rail-linea bg-rail-2 text-rail-texto-2 shadow-2 transition-colors duration-[140ms] hover:bg-rail-linea hover:text-rail-texto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sol/60"
+        >
+          <span
+            aria-hidden
+            className={cn(
+              "[&>svg]:size-3 transition-transform duration-200",
+              !colapsado && "rotate-180",
+            )}
+          >
+            <IcoChevron />
+          </span>
+        </button>
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -230,8 +330,12 @@ export function AppShell({ children, requires }: { children: ReactNode; requires
         </main>
       </div>
 
-      {/* En pantalla grande la banda queda fija al pie, a la derecha del rail. */}
-      <div className="fixed inset-x-0 bottom-0 z-20 hidden lg:left-[236px] lg:block">
+      {/* En pantalla grande la banda queda fija al pie, a la derecha del rail.
+          El offset sigue el ancho real del aside en cada estado. */}
+      <div
+        className="fixed inset-x-0 bottom-0 z-20 hidden transition-[left] duration-[220ms] ease-[var(--ease-menu)] lg:block"
+        style={{ left: colapsado ? RAIL_ANCHO_COLAPSADO : RAIL_ANCHO }}
+      >
         <BandaDivisas onMercado={() => setMercado(true)} />
       </div>
 
@@ -310,32 +414,59 @@ function isActive(pathname: string, to: string) {
   return to === "/" ? pathname === "/" : pathname.startsWith(to);
 }
 
-/** El módulo activo: fondo #2E251A, icono ámbar y un puntito ámbar a la derecha. */
+/** El módulo activo: fondo #2E251A, icono ámbar y un puntito ámbar a la derecha.
+ *  Colapsado, el punto se vuelve una barrita ámbar contra el borde y la
+ *  etiqueta se muestra al pasar el mouse o al enfocar con teclado. */
 function EnlaceRail({
   to,
   label,
   icon: Icon,
   active,
+  colapsado,
 }: {
   to: string;
   label: string;
   icon: Icono;
   active: boolean;
+  colapsado: boolean;
 }) {
   return (
     <Link
       to={to}
+      aria-label={colapsado ? label : undefined}
+      aria-current={active ? "page" : undefined}
       className={cn(
-        "flex items-center gap-3 px-5 py-[0.55rem] text-[14px] transition-colors duration-[140ms]",
+        "group relative flex items-center py-[0.55rem] text-[14px] transition-colors duration-[140ms] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sol/60 focus-visible:ring-inset",
+        colapsado ? "justify-center px-0" : "gap-3 px-5",
         active ? "bg-[#2E251A] text-[#F2EADE]" : "text-[#C4B7A4] hover:bg-[#1F1810]",
       )}
     >
+      {active && colapsado && (
+        <span aria-hidden className="absolute inset-y-1.5 left-0 w-[3px] rounded-r-full bg-sol" />
+      )}
       <span className={cn("flex-none", active ? "text-sol" : "text-[#9B8D7B]")}>
         <Icon />
       </span>
-      <span className="min-w-0 flex-1">{label}</span>
-      {active && <span aria-hidden className="size-1.5 flex-none rounded-full bg-sol" />}
+      {!colapsado && <span className="min-w-0 flex-1">{label}</span>}
+      {active && !colapsado && (
+        <span aria-hidden className="size-1.5 flex-none rounded-full bg-sol" />
+      )}
+      {colapsado && <EtiquetaFlotante>{label}</EtiquetaFlotante>}
     </Link>
+  );
+}
+
+/** La etiqueta flotante del rail colapsado: aparece a la derecha del ícono al
+ *  pasar el mouse o al enfocar con teclado. Decorativa (el control ya trae su
+ *  propio nombre accesible), así que se oculta del árbol de accesibilidad. */
+function EtiquetaFlotante({ children }: { children: ReactNode }) {
+  return (
+    <span
+      aria-hidden
+      className="pointer-events-none absolute left-full top-1/2 z-30 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md border border-rail-linea bg-rail-2 px-2.5 py-1 text-[12px] text-rail-texto opacity-0 shadow-2 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100"
+    >
+      {children}
+    </span>
   );
 }
 

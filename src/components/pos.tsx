@@ -184,10 +184,12 @@ export function POS({
       ];
     });
     setCustomizeFor(null);
-    // Colapsa la búsqueda de texto tras agregar: el resultado ya cumplió su
-    // propósito y debe quedar listo para el siguiente producto, no seguir
-    // mostrando la misma lista filtrada tapando el resto de la pantalla.
+    // Colapsa la búsqueda (texto y categoría) tras agregar: el resultado ya
+    // cumplió su propósito y debe quedar listo para el siguiente producto,
+    // no seguir mostrando la misma lista filtrada tapando el resto de la
+    // pantalla.
     setQ("");
+    setCat("all");
     document.getElementById("pos-search")?.focus();
   }
 

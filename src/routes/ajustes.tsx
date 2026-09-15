@@ -668,7 +668,12 @@ function Impresion() {
         <Field label="Tortas frías · mínimo USD">
           <Input
             className="num"
-            value={String(f.coldCakeMin)}
+            inputMode="decimal"
+            // No controlado a propósito: si se ata `value` al número ya
+            // parseado, cada tecla reformatea de vuelta a texto y le pisa al
+            // usuario el punto decimal antes de que pueda seguir escribiendo
+            // (mismo problema que "Precios por tipo" en inventario.tsx).
+            defaultValue={String(f.coldCakeMin)}
             onChange={(e) =>
               setF({ ...f, coldCakeMin: parseFloat(e.target.value.replace(",", ".")) || 1.1 })
             }
@@ -677,7 +682,8 @@ function Impresion() {
         <Field label="Tortas frías · máximo USD">
           <Input
             className="num"
-            value={String(f.coldCakeMax)}
+            inputMode="decimal"
+            defaultValue={String(f.coldCakeMax)}
             onChange={(e) =>
               setF({ ...f, coldCakeMax: parseFloat(e.target.value.replace(",", ".")) || 1.2 })
             }

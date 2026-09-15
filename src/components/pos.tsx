@@ -31,18 +31,20 @@ import { cn } from "@/lib/utils";
 import { shortcutsOf, useShortcuts } from "@/lib/shortcuts";
 
 /**
- * Bloqueo de stock cero (requisito explícito del dueño del negocio): un
- * producto sin stock no se puede agregar al carrito por ningún camino.
+ * Sólo informativo: marca un producto para las etiquetas "Sin stock"/"Se
+ * agotó" en la búsqueda y en el carrito. NO bloquea seleccionarlo, subir su
+ * cantidad ni cobrar — el negocio decide vender lo que el conteo dice que no
+ * hay y lo cuadra después con un ajuste de inventario (mismo criterio que ya
+ * aplica el backend, ver inventory.service.ts: "stock puede quedar negativo
+ * a propósito").
  *
- * Excepción deliberada: los combos (`isCombo`) usan su campo `stock` como un
- * valor placeholder que el motor de negocio nunca decrementa al vender (ver
+ * Excepción: los combos (`isCombo`) usan su campo `stock` como un valor
+ * placeholder que el motor de negocio nunca decrementa al vender (ver
  * `applyMovement`/`createSale` en `lib/business.ts`, que saltan explícitamente
  * los combos al mover inventario) ni repone; el seed los crea con `stock: 999`
- * como "sin límite". No es inventario real, así que bloquearlos por llegar a 0
- * (incluyendo el reseteo masivo a 0 que se acaba de hacer) impediría vender
- * combos sin ninguna razón de negocio. `bsOnly` NO se excluye: son productos
- * con stock real igual que cualquier otro (el ejemplo "Ponquesitos
- * decorados" además es combo, por eso queda exento, pero no por ser bsOnly).
+ * como "sin límite" — no es inventario real, así que nunca deben mostrarse
+ * como agotados. `bsOnly` NO se excluye: son productos con stock real igual
+ * que cualquier otro.
  */
 function isOutOfStock(p: Product) {
   return !p.isCombo && p.stock <= 0;
@@ -135,11 +137,11 @@ export function POS({
   });
 
   function add(p: Product, customization?: string) {
-    if (isOutOfStock(p)) {
-      toast.error(`Sin stock disponible: ${p.name}`);
-      setCustomizeFor(null);
-      return;
-    }
+    // El stock nunca bloquea: es informativo (etiqueta "Sin stock"/"Se agotó"),
+    // no un límite duro. El negocio decide vender lo que el conteo dice que no
+    // hay y lo cuadra después con un ajuste de inventario — mismo criterio que
+    // ya aplica el backend (ver inventory.service.ts, "stock puede quedar
+    // negativo a propósito").
     if (p.allowCustomization && customization === undefined && !customizeFor) {
       setCustomizeFor(p);
       return;
@@ -298,14 +300,7 @@ export function POS({
                 icono
                 size="sm"
                 className="size-11 sm:size-[1.95rem]"
-                disabled={lineOutOfStock}
-                onClick={() => {
-                  if (lineOutOfStock) {
-                    toast.error(`Sin stock disponible: ${i.name}`);
-                    return;
-                  }
-                  setQty(k, i.qty + 1);
-                }}
+                onClick={() => setQty(k, i.qty + 1)}
                 aria-label={`Agregar una unidad de ${i.name}`}
               >
                 <IcoMas />
@@ -501,21 +496,8 @@ export function POS({
                   <button
                     key={p.id}
                     type="button"
-                    disabled={outOfStock}
-                    aria-disabled={outOfStock}
-                    onClick={() => {
-                      if (outOfStock) {
-                        toast.error(`Sin stock disponible: ${p.name}`);
-                        return;
-                      }
-                      add(p);
-                    }}
-                    className={cn(
-                      "flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors",
-                      outOfStock
-                        ? "cursor-not-allowed opacity-45 grayscale-[60%]"
-                        : "hover:bg-sol-vela",
-                    )}
+                    onClick={() => add(p)}
+                    className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-sol-vela"
                   >
                     <span className="num w-16 shrink-0 text-xs text-muted-foreground">
                       {p.code}

@@ -116,6 +116,17 @@ export function POS({
   const showResults = q.trim() !== "" || cat !== "all";
 
   const { totalUsd, totalBs } = itemsTotals(items, money);
+  /* Una línea puede agotarse DESPUÉS de agregarse al carrito — típicamente al
+     procesar un pedido que se creó cuando sí había stock, y otro dispositivo
+     vendió el producto mientras seguía pendiente. `add()` ya bloquea agregar
+     algo sin stock, pero eso no cubre este caso (las líneas llegan
+     precargadas vía `initialItems`, no por `add()`). Antes sólo se avisaba
+     con la etiqueta "Se agotó" y se dejaba cobrar igual; ahora también se
+     bloquea el cobro hasta que se quite la línea o vuelva a haber stock. */
+  const hasOutOfStockLine = items.some((i) => {
+    const p = s.products.find((x) => x.id === i.productId);
+    return p ? isOutOfStock(p) : false;
+  });
   const liveOrder = orderId ? s.orders.find((o) => o.id === orderId) : undefined;
   const balance = liveOrder ? orderBalance(s, liveOrder) : null;
   const hasDeposits = !!balance && balance.depositUsd > 0.001;
@@ -253,7 +264,8 @@ export function POS({
         // carrito, por ejemplo por una venta sincronizada desde otro
         // dispositivo mientras el pedido seguía abierto. No retiramos la
         // línea sola (el usuario decide si la completa o la quita), pero
-        // avisamos y evitamos que suba más la cantidad de algo sin stock.
+        // avisamos, evitamos que suba más la cantidad, y el botón de cobrar
+        // queda bloqueado hasta que se resuelva (ver hasOutOfStockLine).
         const lineProduct = s.products.find((pr) => pr.id === i.productId);
         const lineOutOfStock = lineProduct ? isOutOfStock(lineProduct) : false;
         return (
@@ -686,8 +698,14 @@ export function POS({
           variant="amber"
           size="lg"
           className="w-full"
-          disabled={!items.length}
-          onClick={() => (mode === "order" ? saveOrder() : setPayOpen(true))}
+          disabled={!items.length || (mode !== "order" && hasOutOfStockLine)}
+          onClick={() => {
+            if (mode === "order") return saveOrder();
+            if (hasOutOfStockLine) {
+              return toast.error("Hay una línea sin stock: quítala o repón el producto para cobrar.");
+            }
+            setPayOpen(true);
+          }}
         >
           {mode === "order"
             ? "Guardar pedido"

@@ -55,7 +55,11 @@ function PriceFixModal({ alert, onClose }: { alert: PriceAlert; onClose: () => v
   const money = useMoney();
   const enBs = alert.mode === "bs";
   const sugerido = enBs ? (alert.suggestedBs ?? 0) : alert.suggestedUsd;
-  const [raw, setRaw] = useState(() => num(sugerido, Number.isInteger(sugerido) ? 0 : 2));
+  // El campo nace con el precio ACTUAL, no con el sugerido: es una corrección,
+  // no una imposición del valor recomendado — el negocio ve de dónde parte y
+  // decide cuánto subir (puede escribir el sugerido a mano si lo quiere tal cual).
+  const actual = enBs ? (alert.currentBs ?? 0) : alert.currentUsd;
+  const [raw, setRaw] = useState(() => num(actual, Number.isInteger(actual) ? 0 : 2));
 
   const valor = parseAmount(raw);
   const valido = Number.isFinite(valor) && valor >= 0;

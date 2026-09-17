@@ -7,7 +7,8 @@ import {
   orderBalance,
   type NewDepositInput,
 } from "./orders";
-import { isGenericColdCake, itemsTotals, moneyOf, rateSnapshot } from "./pricing";
+import { currentRate, isGenericColdCake, itemsTotals, moneyOf, rateSnapshot } from "./pricing";
+import { DEFAULT_RATE_MAX_AGE_HOURS } from "./pricing-rules";
 import { getState, logAudit, mutate } from "./store";
 import { newId } from "./ids";
 import {
@@ -95,23 +96,50 @@ export function setRate(source: RateSource, value: number, automatic = false) {
   if (published) queueRateCreate(published);
 }
 
-/** Intenta obtener tasas oficiales; si falla, el admin las edita a mano. */
+type DolarApiQuote = { fuente: string; promedio: number };
+
+async function dolarApi(path: "dolares" | "euros"): Promise<DolarApiQuote[]> {
+  const res = await fetch(`https://ve.dolarapi.com/v1/${path}`);
+  if (!res.ok) throw new Error(`dolarapi /${path}: ${res.status}`);
+  return (await res.json()) as DolarApiQuote[];
+}
+
+/**
+ * Publica una tasa automática sólo si aporta algo: cambió el valor o la vigente
+ * ya está vencida. Se consulta en cada cambio de pantalla, y publicar siempre
+ * llenaría el log append-only de tasas (y la auditoría) con copias idénticas.
+ */
+function publishAutomaticRate(source: RateSource, value: number | undefined) {
+  if (!value || !Number.isFinite(value)) return;
+  const s = getState();
+  const actual = currentRate(s, source);
+  const maxAge = s.company.rateMaxAgeHours ?? DEFAULT_RATE_MAX_AGE_HOURS;
+  const ageHours = actual ? (Date.now() - Date.parse(actual.createdAt)) / 3_600_000 : Infinity;
+  if (actual?.value === value && ageHours <= maxAge) return;
+  setRate(source, value, true);
+}
+
+/**
+ * Trae BCV USD, paralelo y BCV EUR de dolarapi. Dólar y euro se consultan por
+ * separado: si falla uno, el otro igual se actualiza. Si fallan ambos, el admin
+ * las edita a mano.
+ */
 export async function fetchRatesFromApi(): Promise<{ ok: boolean; message: string }> {
-  try {
-    const res = await fetch("https://ve.dolarapi.com/v1/dolares");
-    if (!res.ok) throw new Error("bad status");
-    const data = (await res.json()) as { fuente: string; promedio: number }[];
-    const oficial = data.find((d) => d.fuente === "oficial");
-    const paralelo = data.find((d) => d.fuente === "paralelo");
-    if (oficial?.promedio) setRate("BCV_USD", oficial.promedio, true);
-    if (paralelo?.promedio) setRate("BINANCE", paralelo.promedio, true);
-    const eur = await fetch("https://ve.dolarapi.com/v1/euro").then((r) => (r.ok ? r.json() : null));
-    if (eur?.oficial?.promedio) setRate("BCV_EUR", eur.oficial.promedio, true);
-    else if (eur?.promedio) setRate("BCV_EUR", eur.promedio, true);
-    return { ok: true, message: "Tasas actualizadas desde la fuente oficial" };
-  } catch {
+  const [dolares, euros] = await Promise.allSettled([dolarApi("dolares"), dolarApi("euros")]);
+  const promedio = (r: PromiseSettledResult<DolarApiQuote[]>, fuente: string) =>
+    r.status === "fulfilled" ? r.value.find((d) => d.fuente === fuente)?.promedio : undefined;
+
+  publishAutomaticRate("BCV_USD", promedio(dolares, "oficial"));
+  publishAutomaticRate("BINANCE", promedio(dolares, "paralelo"));
+  publishAutomaticRate("BCV_EUR", promedio(euros, "oficial"));
+
+  if (dolares.status === "rejected" && euros.status === "rejected")
     return { ok: false, message: "No se pudo consultar la API. Edita las tasas manualmente." };
+  if (dolares.status === "rejected" || euros.status === "rejected") {
+    const falta = dolares.status === "rejected" ? "el dólar" : "el euro";
+    return { ok: true, message: `Tasas actualizadas, pero no se pudo traer ${falta}` };
   }
+  return { ok: true, message: "Tasas actualizadas desde la fuente oficial" };
 }
 
 /* ── Inventario ───────────────────────────────────────── */

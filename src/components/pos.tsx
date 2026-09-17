@@ -81,7 +81,11 @@ export function POS({
   const lockedCustomer = !!orderId;
   const checkoutOnly = !!orderId; // Procesar pedido: solo cobrar, sin catálogo
   const displayCustomerName = customer?.name ?? initialCustomerName ?? "Consumidor final";
-  const [note, setNote] = useState("");
+  // Al procesar un pedido la venta arranca con la nota del pedido, para que no
+  // se pierda en el ticket; en venta directa arranca vacía.
+  const [note, setNote] = useState(() =>
+    orderId ? (s.orders.find((o) => o.id === orderId)?.note ?? "") : "",
+  );
   const [payOpen, setPayOpen] = useState(false);
   const [custQ, setCustQ] = useState("");
   const [custFocus, setCustFocus] = useState(false);
@@ -596,15 +600,19 @@ export function POS({
           )}
           <p className="num text-right text-[11px] text-muted-foreground">Tasa BCV: {num(rate)}</p>
         </div>
+        <Textarea
+          className={cn("mt-3", mode !== "order" && "mb-3")}
+          rows={2}
+          placeholder={
+            mode === "order"
+              ? "Notas del pedido (ej: sin arequipe, para las 4pm)"
+              : "Notas de la venta (ej: para llevar, retira otra persona)"
+          }
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+        />
         {mode === "order" && (
           <>
-            <Textarea
-              className="mt-3"
-              rows={2}
-              placeholder="Notas del pedido (ej: sin arequipe, para las 4pm)"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-            />
             <div className="mb-3 space-y-2 border-t border-border py-3">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium">Abono adelantado</span>
@@ -725,6 +733,7 @@ export function POS({
           setLastSale(res.sale!);
           setItems([]);
           setCustomer(null);
+          setNote("");
           setPayOpen(false);
           onDone?.();
         }}

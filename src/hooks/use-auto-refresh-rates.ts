@@ -4,6 +4,7 @@
  * Se consulta la API:
  *  - al entrar al sistema (carga de la app con sesión, o al iniciar sesión);
  *  - en cada cambio de pantalla;
+ *  - cada 5 minutos mientras la app está a la vista;
  *  - al volver a la app (pestaña o PWA que regresa a primer plano), porque la
  *    app instalada puede quedarse abierta días sin recargarse.
  *
@@ -25,6 +26,10 @@ import { useRouterState } from "@tanstack/react-router";
 import { useHydrated } from "@/components/app-shell";
 import { useSession } from "@/lib/auth";
 import { fetchRatesFromApi } from "@/lib/business";
+
+/** Consulta periódica mientras la app está a la vista, para que la tasa no se
+ *  quede fija si nadie cambia de pantalla. */
+const REFRESH_EVERY_MS = 5 * 60 * 1000;
 
 /** Módulo, no componente: una sola consulta en vuelo aunque varias pantallas
  *  o eventos la pidan a la vez. */
@@ -54,13 +59,18 @@ export function useAutoRefreshRates() {
     refreshRates();
   }, [hydrated, userId, pathname]);
 
-  // Regreso a la app sin recarga ni navegación.
+  // Cada 5 min con la app a la vista, y al regresar a ella sin recarga ni
+  // navegación. En segundo plano no se consulta: al volver se pone al día.
   useEffect(() => {
     if (!hydrated || !userId) return;
     const onVisible = () => {
       if (document.visibilityState === "visible") refreshRates();
     };
+    const timer = setInterval(onVisible, REFRESH_EVERY_MS);
     document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [hydrated, userId]);
 }

@@ -404,10 +404,25 @@ export interface DailyClosure {
   salesCount: number;
   totalUsd: number;
   totalBs: number;
-  byMethod: { methodId: ID; methodName: string; expected: number; received: number }[];
+  /**
+   * `expected`/`received` en USD. `currency`, `expectedAmount` y
+   * `receivedAmount` (en la moneda del método) faltan en cierres anteriores a
+   * que el cierre se cuadrara por moneda.
+   */
+  byMethod: {
+    methodId: ID;
+    methodName: string;
+    expected: number;
+    received: number;
+    currency?: "USD" | "BS";
+    expectedAmount?: number;
+    receivedAmount?: number;
+  }[];
   expectedUsd: number;
   receivedUsd: number;
   differenceUsd: number;
+  /** Tasa BCV con la que se llevaron a USD los bolívares contados. */
+  rate?: number;
   note?: string;
   closedAt: string;
   /** Abonos recibidos el día del cierre, según el servidor. */

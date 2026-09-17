@@ -9,6 +9,7 @@ import {
 } from "./orders";
 import { currentRate, isGenericColdCake, itemsTotals, moneyOf, rateSnapshot } from "./pricing";
 import { DEFAULT_RATE_MAX_AGE_HOURS } from "./pricing-rules";
+import { dayKey } from "./format";
 import { getState, logAudit, mutate } from "./store";
 import { newId } from "./ids";
 import {
@@ -504,47 +505,98 @@ export function upsertCustomer(c: Partial<Customer> & { cedula: string; name: st
  * pedido se facture el viernes. Para eso cada pago lleva `at` y los abonos que
  * se convierten en pago de venta se marcan con `fromOrderDepositId`, de modo que
  * se cuentan una sola vez, el día del abono.
+ *
+ * Cada método se cuadra **en su moneda** (la configurada hoy en el método): un
+ * método en Bs espera los bolívares que realmente entraron (`Payment.amount`),
+ * no su equivalente en USD reconvertido a la tasa del día. `expected` sigue en
+ * USD para los totales y los cierres ya guardados.
  */
 export function closureDraft(s: AppState, dayISO: string) {
   const sales = s.sales.filter(
     (x) => x.status === "completada" && x.createdAt.slice(0, 10) === dayISO,
   );
+  const methodCurrency = new Map(s.paymentMethods.map((m) => [m.id, m.currency]));
 
-  /** Entradas de efectivo del día, por método. */
-  const received: { methodId: ID; usd: number }[] = [];
+  /** Tasa Bs/USD con la que entró un pago: la congelada, la implícita o la de la venta. */
+  const rateOf = (p: Payment, fallback: number) =>
+    p.rateUsed ||
+    (p.currency === "BS" && p.usdEquivalent > 0 ? p.amount / p.usdEquivalent : fallback);
+
+  /** Monto de un pago expresado en la moneda del método que lo recibió. */
+  const inMethodCurrency = (p: Payment, usdAmount: number, fallbackRate: number) => {
+    const currency = methodCurrency.get(p.methodId) ?? p.currency;
+    if (currency === "USD") return usdAmount;
+    if (p.currency === "BS" && usdAmount === p.usdEquivalent) return p.amount;
+    return usdAmount * rateOf(p, fallbackRate);
+  };
+
+  /** Entradas de efectivo del día, por método (en USD y en la moneda del método). */
+  const received: { methodId: ID; usd: number; amount: number }[] = [];
   for (const sale of s.sales) {
     if (sale.status !== "completada") continue;
     for (const p of sale.payments) {
       if (p.fromOrderDepositId) continue; // ya se contó el día del abono
       if ((p.at ?? sale.createdAt).slice(0, 10) !== dayISO) continue;
-      received.push({ methodId: p.methodId, usd: p.usdEquivalent });
+      received.push({
+        methodId: p.methodId,
+        usd: p.usdEquivalent,
+        amount: inMethodCurrency(p, p.usdEquivalent, sale.rateSnapshot?.usd ?? 0),
+      });
     }
   }
   const dayDeposits = depositsOfDay(s, dayISO);
   for (const { deposit } of dayDeposits) {
-    received.push({ methodId: deposit.methodId, usd: deposit.usdEquivalent });
+    received.push({
+      methodId: deposit.methodId,
+      usd: deposit.usdEquivalent,
+      amount: inMethodCurrency(deposit, deposit.usdEquivalent, 0),
+    });
   }
 
-  // Descuenta el vuelto entregado del método con el que se pagó de más (el último pago).
-  const changeByMethod = new Map<string, number>();
+  // Descuenta el vuelto entregado del método con el que se pagó de más (el
+  // último pago), en USD y en la moneda de ese método a la tasa de ese pago.
+  const changeByMethod = new Map<string, { usd: number; amount: number }>();
   for (const sale of sales) {
     const change =
       sale.changeUsd ??
       Math.max(0, sale.payments.reduce((a, p) => a + p.usdEquivalent, 0) - sale.totalUsd);
     const last = sale.payments[sale.payments.length - 1];
-    if (change > 0.001 && last)
-      changeByMethod.set(last.methodId, (changeByMethod.get(last.methodId) ?? 0) + change);
+    if (change > 0.001 && last) {
+      const acc = changeByMethod.get(last.methodId) ?? { usd: 0, amount: 0 };
+      acc.usd += change;
+      acc.amount += inMethodCurrency(last, change, sale.rateSnapshot?.usd ?? 0);
+      changeByMethod.set(last.methodId, acc);
+    }
   }
 
   const byMethod = s.paymentMethods.map((m) => {
-    const gross = received.filter((r) => r.methodId === m.id).reduce((a, r) => a + r.usd, 0);
-    const expected = gross - (changeByMethod.get(m.id) ?? 0);
-    return { methodId: m.id, methodName: m.name, expected, received: expected };
+    const mine = received.filter((r) => r.methodId === m.id);
+    const change = changeByMethod.get(m.id);
+    const expected = mine.reduce((a, r) => a + r.usd, 0) - (change?.usd ?? 0);
+    const expectedAmount = mine.reduce((a, r) => a + r.amount, 0) - (change?.amount ?? 0);
+    return {
+      methodId: m.id,
+      methodName: m.name,
+      currency: m.currency,
+      expected,
+      received: expected,
+      expectedAmount: Math.round(expectedAmount * 100) / 100,
+    };
   });
+
+  // Tasa BCV vigente ese día: la última publicada hasta esa fecha (hoy, la actual).
+  const dayRate =
+    s.rates
+      .filter((r) => r.source === "BCV_USD" && dayKey(r.createdAt) <= dayISO)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]?.value ??
+    currentRate(s, "BCV_USD")?.value ??
+    0;
 
   return {
     sales,
     byMethod,
+    /** Tasa BCV con la que se llevan a USD los bolívares contados en el cierre. */
+    rate: dayRate,
     /** Facturado del día (suma de los totales de las ventas). */
     totalUsd: sales.reduce((a, x) => a + x.totalUsd, 0),
     totalBs: sales.reduce((a, x) => a + x.totalBs, 0),

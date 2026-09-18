@@ -24,9 +24,10 @@
  *  · implementadas de punta a punta: `sale.create`, `sale.void`, `order.create`,
  *    `order.update`, `order.status`, `order.delete`, `orderDeposit.create`,
  *    `orderDeposit.void`, `movement.create`, `customer.create`, `customer.update`,
- *    `product.create`, `product.update`, `productPrice.set`, `rate.create`.
+ *    `product.create`, `product.update`, `productPrice.set`, `rate.create`,
+ *    `closure.create`.
  *  · pendientes (el motor ya las soporta; sólo falta la llamada en su mutador):
- *    `closure.create`, `audit.append`.
+ *    `audit.append`.
  *
  * Las tres operaciones de grupo de precio desaparecieron con el esquema 6, que
  * retiró el mecanismo entero (ver `toV6` en lib/migrations).
@@ -40,6 +41,7 @@
 import type {
   ComboItem,
   Customer,
+  DailyClosure,
   ExchangeRate,
   ID,
   InventoryMovement,
@@ -185,11 +187,7 @@ export function queueOrderUpdate(order: Order, patch: Partial<Order>) {
  * nunca pelean.
  */
 export function queueOrderStatus(order: Order, status: OrderStatus, reason?: string) {
-  enqueueMutation(
-    "order.status",
-    { orderId: order.id, status, reason },
-    { baseRev: order.rev },
-  );
+  enqueueMutation("order.status", { orderId: order.id, status, reason }, { baseRev: order.rev });
 }
 
 /** `order.delete`. El servidor lo niega si tiene abonos vigentes, igual que el frontend. */
@@ -390,6 +388,42 @@ export function queueMovementCreate(m: InventoryMovement) {
       createdAt: m.createdAt,
     },
     { at: m.createdAt },
+  );
+}
+
+/* ── Cierres ──────────────────────────────────────────── */
+
+/**
+ * `closure.create`. El servidor recalcula lo **esperado** desde sus propias
+ * ventas y abonos (`ClosuresService.draft`); lo único que viaja del cierre local
+ * es lo que el cajero contó de verdad: `byMethod[].received`, ya en USD (el
+ * mismo número que se guarda en el cierre local, ver `cierre.tsx`). `expected`,
+ * `expectedAmount`/`receivedAmount` por moneda, `rate` y los totales del día no
+ * son parte de `CreateClosureDto`: son derivados y el servidor los descarta si
+ * llegaran.
+ *
+ * "Gana el primero" (§5): si otra caja cerró antes ese mismo día contable, el
+ * servidor responde `rejected`/`already_closed` con **su** cierre. El motor
+ * (`engine.ts`) adopta esa respuesta como `serverEntity`, y `apply.ts` tiene que
+ * sustituir el cierre local de esa fecha —así tenga otro id— por el del
+ * servidor: dos cierres sin red para el mismo día nunca deben coexistir.
+ */
+export function queueClosureCreate(closure: DailyClosure) {
+  enqueueMutation(
+    "closure.create",
+    {
+      id: closure.id,
+      date: closure.date,
+      byMethod: closure.byMethod.map((m) => ({
+        methodId: m.methodId,
+        // Nunca negativo: un valor fuera de rango es un rechazo permanente
+        // (`@Min(0)` en `ClosureMethodDto`) que sacaría la mutación de la cola
+        // sin que el cierre llegara jamás al servidor.
+        received: Math.max(0, Math.round(m.received * 100) / 100),
+      })),
+      note: closure.note,
+    },
+    { at: closure.closedAt },
   );
 }
 

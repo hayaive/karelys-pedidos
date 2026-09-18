@@ -37,6 +37,7 @@ import {
   renameCategory,
   useCategoryAccess,
 } from "@/lib/sync/categories";
+import { deleteProduct, deletionErrorText } from "@/lib/sync/deletions";
 import { dt, num, usd } from "@/lib/format";
 import { uid } from "@/lib/seed";
 import type { Category, Product } from "@/lib/types";
@@ -73,6 +74,7 @@ function Inventario() {
   const [stockFilter, setStockFilter] = useState("all");
   const [edit, setEdit] = useState<Partial<Product> | null>(null);
   const [del, setDel] = useState<Product | null>(null);
+  const [borrandoProducto, setBorrandoProducto] = useState(false);
   const [mov, setMov] = useState<Product | null>(null);
 
   // La cifra grande es la del tipo de precio predeterminado (Ajustes); los
@@ -347,20 +349,23 @@ function Inventario() {
         message={`¿Eliminar ${del?.name}? Considera desactivarlo si tiene historial de ventas.`}
         onCancel={() => setDel(null)}
         onConfirm={() => {
-          mutate((st) => {
-            // El código se retira aquí también, no sólo cuando llega el
-            // tombstone del servidor (ver `applyDeletions` en lib/sync/apply):
-            // en lo que la mutación de borrado sube, `nextProductCode` no debe
-            // ofrecer un código que este mismo equipo acaba de dejar libre "a
-            // medias" en pantalla pero que el servidor todavía cree ocupado.
-            const retirados = new Set(st.retiredProductCodes ?? []);
-            retirados.add(del!.code);
-            st.retiredProductCodes = [...retirados];
-            st.products = st.products.filter((x) => x.id !== del!.id);
-            logAudit("producto_eliminado", "product", del!.id);
-          });
-          toast.success("Producto eliminado");
-          setDel(null);
+          // Igual que categorías: primero el servidor, y sólo si confirma se
+          // toca el estado local (ver `lib/sync/deletions`). El código se
+          // retira ahí mismo, no hace falta duplicarlo aquí.
+          if (borrandoProducto) return;
+          const target = del!;
+          setBorrandoProducto(true);
+          deleteProduct(target)
+            .then(() => {
+              toast.success("Producto eliminado");
+              setDel(null);
+            })
+            .catch((err) => {
+              toast.error("No se pudo eliminar el producto", {
+                description: deletionErrorText(err),
+              });
+            })
+            .finally(() => setBorrandoProducto(false));
         }}
       />
     </>

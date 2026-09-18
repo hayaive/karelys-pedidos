@@ -11,6 +11,8 @@ import { bsToUsd } from "@/lib/money";
 import { uid } from "@/lib/seed";
 import { useSession } from "@/lib/auth";
 import { useMoney } from "@/hooks/use-money";
+import { queueClosureCreate } from "@/lib/sync/mutations";
+import type { DailyClosure } from "@/lib/types";
 
 export const Route = createFileRoute("/cierre")({
   ssr: false,
@@ -242,33 +244,40 @@ function Cierre() {
                   className="w-full"
                   disabled={!can("close_cash") || draft.sales.length === 0}
                   onClick={() => {
+                    // Se arma el cierre una sola vez y se usa tal cual tanto para el
+                    // store local como para el payload de `closure.create`: así el
+                    // número que ve el cajero y el que sube a la cola son siempre el
+                    // mismo (`byMethod[].received` ya viene en USD, que es justo lo
+                    // que espera `CreateClosureDto`; ver `queueClosureCreate`).
+                    const newClosure: DailyClosure = {
+                      id: uid(),
+                      date: day,
+                      userId: user!.id,
+                      userName: user!.fullName,
+                      salesCount: draft.sales.length,
+                      totalUsd: draft.totalUsd,
+                      totalBs: draft.totalBs,
+                      byMethod: rows.map((m) => ({
+                        methodId: m.methodId,
+                        methodName: m.methodName,
+                        currency: m.currency,
+                        expected: m.expected,
+                        received: m.expected + m.diffUsd,
+                        expectedAmount: m.expectedAmount,
+                        receivedAmount: m.countedAmount,
+                      })),
+                      expectedUsd: draft.expectedUsd,
+                      receivedUsd: draft.expectedUsd + diff,
+                      differenceUsd: diff,
+                      rate,
+                      note,
+                      closedAt: new Date().toISOString(),
+                    };
                     mutate((st) => {
-                      st.closures.unshift({
-                        id: uid(),
-                        date: day,
-                        userId: user!.id,
-                        userName: user!.fullName,
-                        salesCount: draft.sales.length,
-                        totalUsd: draft.totalUsd,
-                        totalBs: draft.totalBs,
-                        byMethod: rows.map((m) => ({
-                          methodId: m.methodId,
-                          methodName: m.methodName,
-                          currency: m.currency,
-                          expected: m.expected,
-                          received: m.expected + m.diffUsd,
-                          expectedAmount: m.expectedAmount,
-                          receivedAmount: m.countedAmount,
-                        })),
-                        expectedUsd: draft.expectedUsd,
-                        receivedUsd: draft.expectedUsd + diff,
-                        differenceUsd: diff,
-                        rate,
-                        note,
-                        closedAt: new Date().toISOString(),
-                      });
+                      st.closures.unshift(newClosure);
                       logAudit("cierre_caja", "closure", day, { diff });
                     });
+                    queueClosureCreate(newClosure);
                     toast.success("Caja cerrada");
                   }}
                 >

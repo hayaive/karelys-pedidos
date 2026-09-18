@@ -150,12 +150,18 @@ function PriceBandFixModal({ alerts, onClose }: { alerts: PriceAlert[]; onClose:
     });
 
     /* Encolar **después** del `mutate`, y por la vía que corresponde a lo que de
-       verdad cambió: el precio en Bs vive en el producto (`product.update` con
-       `bsOnly` + `bsPrice`), el precio en USD en la celda `(producto, tipo de
-       precio)` (`productPrice.set`), que es la unidad de conflicto del servidor. */
+       verdad cambió: los precios en Bs viven en el producto (`product.update` con
+       `bsOnly` + `bsPrice` + `bsPrices`), el precio en USD en la celda
+       `(producto, tipo de precio)` (`productPrice.set`), que es la unidad de
+       conflicto del servidor. Si Mayor y Detal en Bs del mismo producto se
+       corrigieron juntos, basta el último parche: ya trae la lista completa. */
+    const ultimoBs = new Map<string, Extract<PriceFixTarget, { mode: "bs" }>>();
     for (const t of hechos) {
-      if (t.mode === "bs") queueProductUpdate(t.productId, { bsOnly: true, bsPrice: t.bsPrice });
+      if (t.mode === "bs") ultimoBs.set(t.productId, t);
       else queueProductPriceSet(t.productId, t.priceTypeId, t.amountUsd);
+    }
+    for (const t of ultimoBs.values()) {
+      queueProductUpdate(t.productId, { bsOnly: true, bsPrice: t.bsPrice, bsPrices: t.bsPrices });
     }
 
     const faltan = elegidas.length - hechos.length;
@@ -244,9 +250,10 @@ function PriceBandFixModal({ alerts, onClose }: { alerts: PriceAlert[]; onClose:
                       {f.alert.productName}
                     </span>
                     <span className="num block text-xs text-texto-2">
+                      {`${f.alert.priceTypeName ? `${f.alert.priceTypeName} · ` : ""}hoy `}
                       {enBs
-                        ? `Hoy ${money.fmtBsAmount(f.alert.currentBs ?? 0)} (≈ ${usd(f.alert.currentUsd)})`
-                        : `Precio ${f.alert.priceTypeName || "de venta"}: ${usd(f.alert.currentUsd)}`}
+                        ? `${money.fmtBsAmount(f.alert.currentBs ?? 0)} (≈ ${usd(f.alert.currentUsd)})`
+                        : usd(f.alert.currentUsd)}
                     </span>
                   </span>
                 </label>

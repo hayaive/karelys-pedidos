@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   IcoBuscar,
   IcoCerrar,
@@ -11,6 +11,7 @@ import {
 import { toast } from "sonner";
 import { useAppState } from "@/lib/store";
 import {
+  bsPriceOf,
   commonPriceTypeId,
   createOrder,
   createSale,
@@ -51,6 +52,7 @@ import {
   inputCls,
 } from "./ui-kit";
 import { TicketPreview } from "./ticket";
+import { PageHead } from "./app-shell";
 import type { Sale } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { shortcutsOf, useShortcuts } from "@/lib/shortcuts";
@@ -82,6 +84,7 @@ export function POS({
   orderId,
   onDone,
   mode = "sale",
+  head,
 }: {
   initialItems?: LineItem[];
   initialCustomerId?: string | null;
@@ -89,6 +92,8 @@ export function POS({
   orderId?: string;
   onDone?: () => void;
   mode?: "sale" | "order";
+  /** Encabezado de la pantalla; si viene, el POS lo pinta con "Limpiar todo" al lado. */
+  head?: { title: string; sub?: string; action?: ReactNode };
 }) {
   const s = useAppState();
   const money = useMoney();
@@ -196,12 +201,10 @@ export function POS({
   const overpaidUsd = balance?.overpaidUsd ?? 0;
   const amountDueUsd = balance ? balance.balanceUsd : totalUsd;
   const amountDueBs = money.toBs(amountDueUsd);
-  // Estado real del carrito para el control general: con el carrito vacío (o
-  // sin líneas con tipo, p. ej. solo tortas frías) no hay nada que comparar,
-  // así que se muestra el tipo pendiente para lo próximo que se agregue en vez
-  // de leerlo como "Mixto".
-  const pricedItems = items.filter((i) => !i.bsOnly);
-  const cartPriceType = pricedItems.length ? commonPriceTypeId(items) : priceTypeId;
+  // Estado real del carrito para el control general: con el carrito vacío no hay
+  // nada que comparar, así que se muestra el tipo pendiente para lo próximo que
+  // se agregue en vez de leerlo como "Mixto".
+  const cartPriceType = items.length ? commonPriceTypeId(items) : priceTypeId;
   // Hay algo que un LIMPIAR se llevaría, o que vale la pena decir que se
   // guardó solo. No depende de `draftEnabled` en el JSX: ya se usa para
   // decidir si mostrar el botón/indicador, y fuera de sale/order nuevo
@@ -339,7 +342,8 @@ export function POS({
           qty: 1,
           priceTypeId,
           unitPriceUsd: unit,
-          unitPriceBs: p.bsOnly ? p.bsPrice : undefined,
+          // Precio en Bs del tipo elegido (Mayor/Detal), no un único precio fijo.
+          unitPriceBs: p.bsOnly ? bsPriceOf(p, priceTypeId) : undefined,
           bsOnly: p.bsOnly,
           customization,
           customizationPrice: extra,
@@ -478,8 +482,9 @@ export function POS({
               </p>
               {/* Tipo de precio de esta línea sola: único control interactivo para
                   ella (el general de arriba repricea todo el carrito de un golpe,
-                  este ajusta solo esta línea). Las líneas bsOnly no tienen tipo. */}
-              {variosTipos && !i.bsOnly && (
+                  este ajusta solo esta línea). Vale también para las de precio en
+                  Bs, que tienen su propio Mayor y Detal. */}
+              {variosTipos && (
                 <div className="mt-1.5">
                   <PriceTypeControl
                     priceTypes={s.priceTypes}
@@ -488,9 +493,6 @@ export function POS({
                     ariaLabel={`Tipo de precio de ${i.name}`}
                   />
                 </div>
-              )}
-              {variosTipos && i.bsOnly && (
-                <p className="mt-1 text-[11px] text-texto-3">Precio fijo Bs</p>
               )}
             </div>
             {/* Contador y precio: en teléfono en fila propia, separados a los extremos. */}
@@ -570,521 +572,540 @@ export function POS({
     </div>
   );
 
-  return (
-    <div
-      className={cn("grid gap-4", checkoutOnly ? "mx-auto max-w-md" : "lg:grid-cols-[1fr_380px]")}
+  /* "Limpiar todo" va junto al título de la pantalla, no dentro del resumen:
+     siempre a la vista (deshabilitado si no hay nada que borrar), que es donde
+     se busca. Por eso el POS pinta su propio encabezado cuando se le pasa `head`. */
+  const limpiar = draftEnabled ? (
+    <Btn
+      className="h-11 shrink-0 hover:border-rojo hover:text-rojo sm:h-[2.45rem]"
+      disabled={!hasDraftableContent}
+      onClick={() => setConfirmClear(true)}
     >
-      <div className={cn("min-w-0 space-y-4", checkoutOnly && "hidden")}>
-        {/* Paso 1 · Cliente */}
-        {!lockedCustomer && (
+      <IcoPapelera /> Limpiar todo
+    </Btn>
+  ) : null;
+
+  return (
+    <>
+      {head && (
+        <PageHead
+          title={head.title}
+          sub={head.sub}
+          action={
+            limpiar || head.action ? (
+              <>
+                {limpiar}
+                {head.action}
+              </>
+            ) : undefined
+          }
+        />
+      )}
+      <div
+        className={cn("grid gap-4", checkoutOnly ? "mx-auto max-w-md" : "lg:grid-cols-[1fr_380px]")}
+      >
+        <div className={cn("min-w-0 space-y-4", checkoutOnly && "hidden")}>
+          {/* Paso 1 · Cliente */}
+          {!lockedCustomer && (
+            <Card className="p-4">
+              <div className="mb-3 flex items-center gap-2">
+                <IcoPersonaMas />
+                <h2 className="text-sm font-semibold">Paso 1: Cliente</h2>
+              </div>
+              {customer ? (
+                <div className="flex items-center gap-3 rounded-md border border-verde/30 bg-verde/10 px-3 py-2.5">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold uppercase">{customer.name}</p>
+                    <p className="num text-xs text-muted-foreground">
+                      {customer.cedula} · {customer.phone || "S/NUM"}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setCustomer(null)}
+                    className="-mr-1 grid size-10 shrink-0 place-items-center rounded-sm text-muted-foreground transition-colors hover:bg-sup-2 hover:text-rojo sm:size-7"
+                    aria-label="Quitar cliente seleccionado"
+                  >
+                    <IcoCerrar />
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="relative">
+                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-texto-3">
+                      <IcoBuscar />
+                    </span>
+                    <Input
+                      id="cust-search"
+                      className="pl-9"
+                      placeholder={`Buscar cliente por nombre o cédula (${sc.search_customer})`}
+                      value={custQ}
+                      onFocus={() => setCustFocus(true)}
+                      onBlur={() => setTimeout(() => setCustFocus(false), 150)}
+                      onChange={(e) => setCustQ(e.target.value)}
+                    />
+                    {custFocus && custQ.trim() !== "" && (
+                      <div className="absolute inset-x-0 top-full z-20 mt-1 max-h-64 overflow-y-auto rounded-md border border-border bg-card shadow-md">
+                        {(() => {
+                          const norm = (t: string) =>
+                            t.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+                          const term = norm(custQ.trim());
+                          const matches = s.customers
+                            .filter(
+                              (c) =>
+                                c.active &&
+                                (norm(c.name).includes(term) || norm(c.cedula).includes(term)),
+                            )
+                            .slice(0, 20);
+                          if (matches.length === 0) {
+                            return (
+                              <p className="px-3 py-3 text-sm text-muted-foreground">
+                                Sin coincidencias. Registra un cliente nuevo abajo.
+                              </p>
+                            );
+                          }
+                          return matches.map((c) => (
+                            <button
+                              key={c.id}
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                setCustomer(c);
+                                setCustQ("");
+                                setCustFocus(false);
+                              }}
+                              className="flex w-full items-center justify-between gap-2 border-b border-border px-3 py-2.5 text-left text-sm last:border-b-0 hover:bg-sol-vela"
+                            >
+                              <span className="min-w-0 truncate font-medium uppercase">
+                                {c.name}
+                              </span>
+                              <span className="num shrink-0 text-xs text-muted-foreground">
+                                {c.cedula}
+                              </span>
+                            </button>
+                          ));
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                  {/* En teléfono se apilan: «Registrar nuevo cliente» no cabe a media fila. */}
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Btn
+                      className="h-11 sm:h-[2.45rem] sm:flex-1"
+                      onClick={() => {
+                        setCustomer(null);
+                        setCustQ("");
+                        setCustFocus(false);
+                      }}
+                    >
+                      Consumidor final
+                    </Btn>
+                    <Btn
+                      variant="amber"
+                      className="h-11 sm:h-[2.45rem] sm:flex-1"
+                      onClick={() => setNewCustOpen(true)}
+                    >
+                      <IcoPersonaMas /> Registrar nuevo cliente
+                    </Btn>
+                  </div>
+                </div>
+              )}
+            </Card>
+          )}
+
+          {/* Paso 2 · Productos */}
           <Card className="p-4">
             <div className="mb-3 flex items-center gap-2">
-              <IcoPersonaMas />
-              <h2 className="text-sm font-semibold">Paso 1: Cliente</h2>
+              <IcoVenta />
+              <h2 className="text-sm font-semibold">
+                {lockedCustomer ? "Productos" : "Paso 2: Productos"}
+              </h2>
+
+              <span className="num ml-auto text-xs text-muted-foreground">
+                {items.length} líneas
+              </span>
             </div>
-            {customer ? (
-              <div className="flex items-center gap-3 rounded-md border border-verde/30 bg-verde/10 px-3 py-2.5">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold uppercase">{customer.name}</p>
-                  <p className="num text-xs text-muted-foreground">
-                    {customer.cedula} · {customer.phone || "S/NUM"}
-                  </p>
-                </div>
-                <button
-                  onClick={() => setCustomer(null)}
-                  className="-mr-1 grid size-10 shrink-0 place-items-center rounded-sm text-muted-foreground transition-colors hover:bg-sup-2 hover:text-rojo sm:size-7"
-                  aria-label="Quitar cliente seleccionado"
-                >
-                  <IcoCerrar />
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <div className="relative">
-                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-texto-3">
-                    <IcoBuscar />
-                  </span>
-                  <Input
-                    id="cust-search"
-                    className="pl-9"
-                    placeholder={`Buscar cliente por nombre o cédula (${sc.search_customer})`}
-                    value={custQ}
-                    onFocus={() => setCustFocus(true)}
-                    onBlur={() => setTimeout(() => setCustFocus(false), 150)}
-                    onChange={(e) => setCustQ(e.target.value)}
-                  />
-                  {custFocus && custQ.trim() !== "" && (
-                    <div className="absolute inset-x-0 top-full z-20 mt-1 max-h-64 overflow-y-auto rounded-md border border-border bg-card shadow-md">
-                      {(() => {
-                        const norm = (t: string) =>
-                          t.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
-                        const term = norm(custQ.trim());
-                        const matches = s.customers
-                          .filter(
-                            (c) =>
-                              c.active &&
-                              (norm(c.name).includes(term) || norm(c.cedula).includes(term)),
-                          )
-                          .slice(0, 20);
-                        if (matches.length === 0) {
-                          return (
-                            <p className="px-3 py-3 text-sm text-muted-foreground">
-                              Sin coincidencias. Registra un cliente nuevo abajo.
-                            </p>
-                          );
-                        }
-                        return matches.map((c) => (
-                          <button
-                            key={c.id}
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              setCustomer(c);
-                              setCustQ("");
-                              setCustFocus(false);
-                            }}
-                            className="flex w-full items-center justify-between gap-2 border-b border-border px-3 py-2.5 text-left text-sm last:border-b-0 hover:bg-sol-vela"
-                          >
-                            <span className="min-w-0 truncate font-medium uppercase">{c.name}</span>
-                            <span className="num shrink-0 text-xs text-muted-foreground">
-                              {c.cedula}
-                            </span>
-                          </button>
-                        ));
-                      })()}
-                    </div>
-                  )}
-                </div>
-                {/* En teléfono se apilan: «Registrar nuevo cliente» no cabe a media fila. */}
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <Btn
-                    className="h-11 sm:h-[2.45rem] sm:flex-1"
-                    onClick={() => {
-                      setCustomer(null);
-                      setCustQ("");
-                      setCustFocus(false);
-                    }}
-                  >
-                    Consumidor final
-                  </Btn>
-                  <Btn
-                    variant="amber"
-                    className="h-11 sm:h-[2.45rem] sm:flex-1"
-                    onClick={() => setNewCustOpen(true)}
-                  >
-                    <IcoPersonaMas /> Registrar nuevo cliente
-                  </Btn>
-                </div>
-              </div>
-            )}
-          </Card>
-        )}
-
-        {/* Paso 2 · Productos */}
-        <Card className="p-4">
-          <div className="mb-3 flex items-center gap-2">
-            <IcoVenta />
-            <h2 className="text-sm font-semibold">
-              {lockedCustomer ? "Productos" : "Paso 2: Productos"}
-            </h2>
-
-            <span className="num ml-auto text-xs text-muted-foreground">{items.length} líneas</span>
-          </div>
-          {/* El tipo de precio del catálogo (y de lo próximo que se agregue) se
+            {/* El tipo de precio del catálogo (y de lo próximo que se agregue) se
               decide en el control general del Resumen, no aquí: tenerlo también
               junto al buscador era un segundo control para la misma decisión. */}
-          <div className="relative">
-            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-texto-3">
-              <IcoBuscar />
-            </span>
-            <Input
-              id="pos-search"
-              className="pl-9"
-              placeholder={`Buscar por nombre o código (${sc.search_product})`}
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-            />
-          </div>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            <Chip active={cat === "all"} onClick={() => setCat("all")}>
-              Todo
-            </Chip>
-            {s.categories.map((c) => (
-              <Chip key={c.id} active={cat === c.id} onClick={() => setCat(c.id)}>
-                {c.name}
-              </Chip>
-            ))}
-          </div>
-
-          {showResults && (
-            <div className="mt-3 max-h-80 divide-y divide-border overflow-y-auto rounded-md border border-border">
-              {products.slice(0, 40).map((p) => {
-                const price = p.bsOnly ? null : priceOf(s, p, priceTypeId);
-                const outOfStock = isOutOfStock(p);
-                const low = !p.isCombo && !outOfStock && p.stock <= p.minStock;
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => add(p)}
-                    className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-sol-vela"
-                  >
-                    <span className="num w-16 shrink-0 text-xs text-muted-foreground">
-                      {p.code}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium">{p.name}</span>
-                    {outOfStock && <Badge tone="red">Sin stock</Badge>}
-                    {low && <Badge tone="red">{Math.max(0, p.stock)}</Badge>}
-                    <span className="w-24 shrink-0 text-right">
-                      <span className="num block text-sm font-semibold text-sol-70">
-                        {p.bsOnly
-                          ? bs(p.bsPrice ?? 0)
-                          : money.fmtBsAmount(money.toBsRounded(price ?? 0))}
-                      </span>
-                      {!p.bsOnly && (
-                        <span className="num block text-[11px] text-muted-foreground">
-                          {usd(price ?? 0)}
-                        </span>
-                      )}
-                    </span>
-                    {!outOfStock && <IcoMas />}
-                  </button>
-                );
-              })}
-              {products.length === 0 && (
-                <p className="py-8 text-center text-sm text-muted-foreground">Sin resultados</p>
-              )}
-              {products.length > 40 && (
-                <p className="px-3 py-2 text-xs text-muted-foreground">
-                  Mostrando 40 de {products.length}. Afina la búsqueda.
-                </p>
-              )}
+            <div className="relative">
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-texto-3">
+                <IcoBuscar />
+              </span>
+              <Input
+                id="pos-search"
+                className="pl-9"
+                placeholder={`Buscar por nombre o código (${sc.search_product})`}
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+              />
             </div>
-          )}
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              <Chip active={cat === "all"} onClick={() => setCat("all")}>
+                Todo
+              </Chip>
+              {s.categories.map((c) => (
+                <Chip key={c.id} active={cat === c.id} onClick={() => setCat(c.id)}>
+                  {c.name}
+                </Chip>
+              ))}
+            </div>
 
-          {items.length > 0 ? (
-            <div className="mt-3 border-t border-border">{LineRows}</div>
-          ) : (
-            <p className="mt-4 py-6 text-center text-sm text-muted-foreground">
-              Aún no has agregado productos.
-            </p>
-          )}
-        </Card>
-      </div>
+            {showResults && (
+              <div className="mt-3 max-h-80 divide-y divide-border overflow-y-auto rounded-md border border-border">
+                {products.slice(0, 40).map((p) => {
+                  const price = p.bsOnly ? null : priceOf(s, p, priceTypeId);
+                  const outOfStock = isOutOfStock(p);
+                  const low = !p.isCombo && !outOfStock && p.stock <= p.minStock;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => add(p)}
+                      className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-sol-vela"
+                    >
+                      <span className="num w-16 shrink-0 text-xs text-muted-foreground">
+                        {p.code}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium">{p.name}</span>
+                      {outOfStock && <Badge tone="red">Sin stock</Badge>}
+                      {low && <Badge tone="red">{Math.max(0, p.stock)}</Badge>}
+                      <span className="w-24 shrink-0 text-right">
+                        <span className="num block text-sm font-semibold text-sol-70">
+                          {p.bsOnly
+                            ? bs(bsPriceOf(p, priceTypeId))
+                            : money.fmtBsAmount(money.toBsRounded(price ?? 0))}
+                        </span>
+                        {!p.bsOnly && (
+                          <span className="num block text-[11px] text-muted-foreground">
+                            {usd(price ?? 0)}
+                          </span>
+                        )}
+                      </span>
+                      {!outOfStock && <IcoMas />}
+                    </button>
+                  );
+                })}
+                {products.length === 0 && (
+                  <p className="py-8 text-center text-sm text-muted-foreground">Sin resultados</p>
+                )}
+                {products.length > 40 && (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">
+                    Mostrando 40 de {products.length}. Afina la búsqueda.
+                  </p>
+                )}
+              </div>
+            )}
 
-      {/* Resumen */}
-      <Card className="p-4 lg:sticky lg:top-20 lg:self-start">
-        <div className="mb-3 flex items-start justify-between gap-2">
-          <div>
+            {items.length > 0 ? (
+              <div className="mt-3 border-t border-border">{LineRows}</div>
+            ) : (
+              <p className="mt-4 py-6 text-center text-sm text-muted-foreground">
+                Aún no has agregado productos.
+              </p>
+            )}
+          </Card>
+        </div>
+
+        {/* Resumen */}
+        <Card className="p-4 lg:sticky lg:top-20 lg:self-start">
+          <div className="mb-3">
             <h2 className="text-[0.95rem] font-semibold">
               {mode === "order" ? "Resumen del pedido" : "Resumen de la venta"}
             </h2>
             {/* El borrador se guarda solo en cada cambio (ver el efecto de
-                autoguardado arriba): esto sólo se lo dice al usuario. */}
+              autoguardado arriba): esto sólo se lo dice al usuario. */}
             {draftEnabled && hasDraftableContent && (
               <p className="text-[11px] text-muted-foreground">Borrador guardado</p>
             )}
           </div>
-          {/* Siempre a la vista (deshabilitado si no hay nada que borrar): si sólo
-              aparecía con contenido, pasaba desapercibido justo cuando hacía falta. */}
-          {draftEnabled && (
-            <Btn
-              size="sm"
-              className="h-11 shrink-0 hover:border-rojo hover:text-rojo sm:h-[1.95rem]"
-              disabled={!hasDraftableContent}
-              onClick={() => setConfirmClear(true)}
-            >
-              <IcoPapelera /> Limpiar todo
-            </Btn>
-          )}
-        </div>
-        <div className="border-t border-border py-3">
-          <p className="text-xs text-muted-foreground">Cliente</p>
-          <p className="truncate text-sm font-semibold uppercase">{displayCustomerName}</p>
-          {customer && <p className="num text-xs text-muted-foreground">{customer.cedula}</p>}
-        </div>
-        <div className="border-t border-border py-3">
-          <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs text-muted-foreground">Artículos ({items.length})</p>
-            {/* Único control general de la venta: vive aquí (no sólo junto al
+          <div className="border-t border-border py-3">
+            <p className="text-xs text-muted-foreground">Cliente</p>
+            <p className="truncate text-sm font-semibold uppercase">{displayCustomerName}</p>
+            {customer && <p className="num text-xs text-muted-foreground">{customer.cedula}</p>}
+          </div>
+          <div className="border-t border-border py-3">
+            <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs text-muted-foreground">Artículos ({items.length})</p>
+              {/* Único control general de la venta: vive aquí (no sólo junto al
                 catálogo) porque al procesar un pedido la tarjeta Productos se
                 oculta y este es el único lugar donde siempre está presente.
                 Muestra la verdad del carrito (mezclado = "Mixto"), no sólo la
                 última elección; al tocarlo repricea todo y queda fijo para lo
                 próximo que se agregue. */}
-            {variosTipos && (
-              <div className="flex items-center gap-1.5">
-                <span className="text-[11px] text-muted-foreground">Todo a</span>
-                <PriceTypeControl
-                  priceTypes={s.priceTypes}
-                  value={cartPriceType}
-                  onChange={applyPriceTypeToAll}
-                  ariaLabel="Tipo de precio de toda la venta"
-                  mixedLabel="Mixto"
-                />
-              </div>
-            )}
-          </div>
-          {items.length === 0 && <p className="text-sm text-muted-foreground">—</p>}
-          <div className="space-y-2">
-            {items.map((i, k) => (
-              <div key={k}>
-                <div className="flex items-center justify-between gap-2 text-sm">
-                  <span className="min-w-0 truncate">{i.name}</span>
-                  <span className="num shrink-0 text-right">
-                    {money.fmtBsAmount(lineBs(i, money))}
-                  </span>
+              {variosTipos && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] text-muted-foreground">Todo a</span>
+                  <PriceTypeControl
+                    priceTypes={s.priceTypes}
+                    value={cartPriceType}
+                    onChange={applyPriceTypeToAll}
+                    ariaLabel="Tipo de precio de toda la venta"
+                    mixedLabel="Mixto"
+                  />
                 </div>
-                <div className="mt-1 flex items-center gap-2">
-                  {/* En Venta/Pedido la línea ya se edita en la tarjeta Productos
+              )}
+            </div>
+            {items.length === 0 && <p className="text-sm text-muted-foreground">—</p>}
+            <div className="space-y-2">
+              {items.map((i, k) => (
+                <div key={k}>
+                  <div className="flex items-center justify-between gap-2 text-sm">
+                    <span className="min-w-0 truncate">{i.name}</span>
+                    <span className="num shrink-0 text-right">
+                      {money.fmtBsAmount(lineBs(i, money))}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex items-center gap-2">
+                    {/* En Venta/Pedido la línea ya se edita en la tarjeta Productos
                       (LineRows): aquí solo se etiqueta, para no tener dos
                       controles interactivos para la misma línea a la vez. Al
                       facturar (checkoutOnly) esa tarjeta está oculta, así que
                       este es el único lugar donde se puede cambiar la línea. */}
-                  {variosTipos &&
-                    !i.bsOnly &&
-                    (checkoutOnly ? (
-                      <PriceTypeControl
-                        priceTypes={s.priceTypes}
-                        value={i.priceTypeId}
-                        onChange={(id) => setLinePriceType(k, id)}
-                        ariaLabel={`Tipo de precio de ${i.name}`}
-                      />
-                    ) : (
-                      <Badge tone="hueco" liso>
-                        {s.priceTypes.find((p) => p.id === i.priceTypeId)?.name ?? ""}
-                      </Badge>
-                    ))}
-                  {variosTipos && i.bsOnly && (
-                    <span className="text-[11px] text-texto-3">Precio fijo Bs</span>
-                  )}
-                  <span className="num text-[11px] text-muted-foreground">
-                    × {i.qty} und
-                    {!i.bsOnly && ` · ${usd(i.unitPriceUsd + (i.customizationPrice ?? 0))}`}
-                  </span>
+                    {variosTipos &&
+                      (checkoutOnly ? (
+                        <PriceTypeControl
+                          priceTypes={s.priceTypes}
+                          value={i.priceTypeId}
+                          onChange={(id) => setLinePriceType(k, id)}
+                          ariaLabel={`Tipo de precio de ${i.name}`}
+                        />
+                      ) : (
+                        <Badge tone="hueco" liso>
+                          {s.priceTypes.find((p) => p.id === i.priceTypeId)?.name ?? ""}
+                        </Badge>
+                      ))}
+                    <span className="num text-[11px] text-muted-foreground">
+                      × {i.qty} und
+                      {!i.bsOnly && ` · ${usd(i.unitPriceUsd + (i.customizationPrice ?? 0))}`}
+                    </span>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
-        <div className="space-y-1.5 border-t border-border py-3">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">Total</span>
-            <span className="text-right">
-              <span className="num block text-lg font-semibold">{bs(totalBs)}</span>
-              <span className="num block text-xs text-muted-foreground">{usd(totalUsd)}</span>
-            </span>
-          </div>
-          {hasDeposits && (
-            <>
-              <div className="flex items-center justify-between text-sol-70">
-                <span className="text-sm">Abonado</span>
-                <span className="text-right">
-                  <span className="num block text-sm font-semibold">
-                    - {money.fmtBs(balance!.depositUsd)}
-                  </span>
-                  <span className="num block text-[11px] opacity-80">
-                    - {usd(balance!.depositUsd)}
-                  </span>
-                </span>
-              </div>
-              <div className="flex items-center justify-between border-t border-border pt-1.5">
-                <span className="text-sm font-medium">Saldo a cobrar</span>
-                <span className="text-right">
-                  <span className="num block text-lg font-semibold">{bs(amountDueBs)}</span>
-                  <span className="num block text-xs text-muted-foreground">
-                    {usd(amountDueUsd)}
-                  </span>
-                </span>
-              </div>
-              {/* Cambiar a un tipo de precio más barato al facturar puede dejar el
-                  nuevo total por debajo de lo ya abonado: no falta nada por
-                  cobrar, sobra, y hay que devolverlo. */}
-              {overpaidUsd > 0.001 && (
-                <div className="flex items-center justify-between text-verde">
-                  <span className="text-sm">A favor del cliente</span>
+          <div className="space-y-1.5 border-t border-border py-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">Total</span>
+              <span className="text-right">
+                <span className="num block text-lg font-semibold">{bs(totalBs)}</span>
+                <span className="num block text-xs text-muted-foreground">{usd(totalUsd)}</span>
+              </span>
+            </div>
+            {hasDeposits && (
+              <>
+                <div className="flex items-center justify-between text-sol-70">
+                  <span className="text-sm">Abonado</span>
                   <span className="text-right">
                     <span className="num block text-sm font-semibold">
-                      {money.fmtBs(overpaidUsd)}
+                      - {money.fmtBs(balance!.depositUsd)}
                     </span>
-                    <span className="num block text-[11px] opacity-80">{usd(overpaidUsd)}</span>
+                    <span className="num block text-[11px] opacity-80">
+                      - {usd(balance!.depositUsd)}
+                    </span>
                   </span>
                 </div>
-              )}
-            </>
-          )}
-          <p className="num text-right text-[11px] text-muted-foreground">Tasa BCV: {num(rate)}</p>
-        </div>
-        <Textarea
-          className={cn("mt-3", mode !== "order" && "mb-3")}
-          rows={2}
-          placeholder={
-            mode === "order"
-              ? "Notas del pedido (ej: sin arequipe, para las 4pm)"
-              : "Notas de la venta (ej: para llevar, retira otra persona)"
-          }
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-        />
-        {mode === "order" && (
-          <>
-            <div className="mb-3 space-y-2 border-t border-border py-3">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">Abono adelantado</span>
-                {depositOn && (
-                  <button
-                    type="button"
-                    className="-my-1.5 -mr-1 rounded px-1 py-1.5 text-xs text-muted-foreground hover:text-rojo"
-                    onClick={() => {
-                      setDepositOn(false);
-                      setDepositAmount("");
-                      setDepositReference("");
-                    }}
-                  >
-                    Quitar
-                  </button>
+                <div className="flex items-center justify-between border-t border-border pt-1.5">
+                  <span className="text-sm font-medium">Saldo a cobrar</span>
+                  <span className="text-right">
+                    <span className="num block text-lg font-semibold">{bs(amountDueBs)}</span>
+                    <span className="num block text-xs text-muted-foreground">
+                      {usd(amountDueUsd)}
+                    </span>
+                  </span>
+                </div>
+                {/* Cambiar a un tipo de precio más barato al facturar puede dejar el
+                  nuevo total por debajo de lo ya abonado: no falta nada por
+                  cobrar, sobra, y hay que devolverlo. */}
+                {overpaidUsd > 0.001 && (
+                  <div className="flex items-center justify-between text-verde">
+                    <span className="text-sm">A favor del cliente</span>
+                    <span className="text-right">
+                      <span className="num block text-sm font-semibold">
+                        {money.fmtBs(overpaidUsd)}
+                      </span>
+                      <span className="num block text-[11px] opacity-80">{usd(overpaidUsd)}</span>
+                    </span>
+                  </div>
                 )}
-              </div>
-              {!depositOn ? (
-                <Btn
-                  className="h-11 w-full sm:h-[2.45rem]"
-                  disabled={!depositMethods.length}
-                  onClick={() => setDepositOn(true)}
-                >
-                  <IcoMas /> El cliente adelantó dinero
-                </Btn>
-              ) : (
-                <div className="space-y-2">
-                  <Select
-                    value={depositMethodId}
-                    onChange={(e) => setDepositMethodId(e.target.value)}
-                  >
-                    {depositMethods.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.name} ({m.currency === "USD" ? "USD" : "Bs"})
-                      </option>
-                    ))}
-                  </Select>
-                  <Input
-                    className="num"
-                    inputMode="decimal"
-                    placeholder={depositMethod?.currency === "USD" ? "Monto en USD" : "Monto en Bs"}
-                    value={depositAmount}
-                    onChange={(e) => setDepositAmount(e.target.value)}
-                  />
-                  {depositMethod?.requiresReference && (
-                    <Input
-                      placeholder="Referencia"
-                      value={depositReference}
-                      onChange={(e) => setDepositReference(e.target.value)}
-                    />
-                  )}
-                  {depositUsdPreview > 0 && (
-                    <p className="num text-xs text-muted-foreground">
-                      ≈ {usd(depositUsdPreview)}
-                      {depositUsdPreview > totalUsd + 0.02 && " · supera el total del pedido"}
-                    </p>
+              </>
+            )}
+            <p className="num text-right text-[11px] text-muted-foreground">
+              Tasa BCV: {num(rate)}
+            </p>
+          </div>
+          <Textarea
+            className={cn("mt-3", mode !== "order" && "mb-3")}
+            rows={2}
+            placeholder={
+              mode === "order"
+                ? "Notas del pedido (ej: sin arequipe, para las 4pm)"
+                : "Notas de la venta (ej: para llevar, retira otra persona)"
+            }
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+          />
+          {mode === "order" && (
+            <>
+              <div className="mb-3 space-y-2 border-t border-border py-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Abono adelantado</span>
+                  {depositOn && (
+                    <button
+                      type="button"
+                      className="-my-1.5 -mr-1 rounded px-1 py-1.5 text-xs text-muted-foreground hover:text-rojo"
+                      onClick={() => {
+                        setDepositOn(false);
+                        setDepositAmount("");
+                        setDepositReference("");
+                      }}
+                    >
+                      Quitar
+                    </button>
                   )}
                 </div>
-              )}
-            </div>
-          </>
-        )}
-        <Btn
-          variant="amber"
-          size="lg"
-          className="w-full"
-          disabled={!items.length}
-          onClick={() => (mode === "order" ? saveOrder() : setPayOpen(true))}
-        >
-          {mode === "order"
-            ? "Guardar pedido"
-            : hasDeposits
-              ? `Cobrar saldo (${sc.checkout})`
-              : `Procesar pago (${sc.checkout})`}
-        </Btn>
-      </Card>
+                {!depositOn ? (
+                  <Btn
+                    className="h-11 w-full sm:h-[2.45rem]"
+                    disabled={!depositMethods.length}
+                    onClick={() => setDepositOn(true)}
+                  >
+                    <IcoMas /> El cliente adelantó dinero
+                  </Btn>
+                ) : (
+                  <div className="space-y-2">
+                    <Select
+                      value={depositMethodId}
+                      onChange={(e) => setDepositMethodId(e.target.value)}
+                    >
+                      {depositMethods.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name} ({m.currency === "USD" ? "USD" : "Bs"})
+                        </option>
+                      ))}
+                    </Select>
+                    <Input
+                      className="num"
+                      inputMode="decimal"
+                      placeholder={
+                        depositMethod?.currency === "USD" ? "Monto en USD" : "Monto en Bs"
+                      }
+                      value={depositAmount}
+                      onChange={(e) => setDepositAmount(e.target.value)}
+                    />
+                    {depositMethod?.requiresReference && (
+                      <Input
+                        placeholder="Referencia"
+                        value={depositReference}
+                        onChange={(e) => setDepositReference(e.target.value)}
+                      />
+                    )}
+                    {depositUsdPreview > 0 && (
+                      <p className="num text-xs text-muted-foreground">
+                        ≈ {usd(depositUsdPreview)}
+                        {depositUsdPreview > totalUsd + 0.02 && " · supera el total del pedido"}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+          <Btn
+            variant="amber"
+            size="lg"
+            className="w-full"
+            disabled={!items.length}
+            onClick={() => (mode === "order" ? saveOrder() : setPayOpen(true))}
+          >
+            {mode === "order"
+              ? "Guardar pedido"
+              : hasDeposits
+                ? `Cobrar saldo (${sc.checkout})`
+                : `Procesar pago (${sc.checkout})`}
+          </Btn>
+        </Card>
 
-      <Modal open={newCustOpen} onClose={() => setNewCustOpen(false)} title="Nuevo cliente">
-        <CustomerPickerBody
-          startNew
-          onPick={(c) => {
-            setCustomer(c);
-            setNewCustOpen(false);
+        <Modal open={newCustOpen} onClose={() => setNewCustOpen(false)} title="Nuevo cliente">
+          <CustomerPickerBody
+            startNew
+            onPick={(c) => {
+              setCustomer(c);
+              setNewCustOpen(false);
+            }}
+          />
+        </Modal>
+
+        <Modal
+          open={!!customizeFor}
+          onClose={() => setCustomizeFor(null)}
+          title={`Personalizar · ${customizeFor?.name ?? ""}`}
+        >
+          <CustomizeForm
+            product={customizeFor}
+            money={money}
+            onSkip={() => customizeFor && add(customizeFor, "")}
+            onConfirm={(txt) => customizeFor && add(customizeFor, txt)}
+          />
+        </Modal>
+
+        <PaymentModal
+          open={payOpen}
+          onClose={() => setPayOpen(false)}
+          totalUsd={amountDueUsd}
+          totalBs={amountDueBs}
+          money={money}
+          onConfirm={(payments) => {
+            const res = createSale({
+              items,
+              customerId: customer?.id ?? initialCustomerId ?? null,
+              customerName: displayCustomerName,
+              payments,
+              note,
+              orderId,
+            });
+            if (!res.ok) return toast.error(res.error!);
+            toast.success("Venta " + res.sale!.number + " registrada");
+            setLastSale(res.sale!);
+            setItems([]);
+            setCustomer(null);
+            setNote("");
+            setPayOpen(false);
+            // Igual que en saveOrder: explícito porque onDone puede desmontar
+            // el POS antes de que el autoguardado llegue a correr. Sólo aplica
+            // a venta directa (draftEnabled): al facturar un pedido existente
+            // no hay borrador propio que borrar aquí.
+            if (draftEnabled) clearDraft(mode, userId);
+            // `onDone` no va aquí: al facturar un pedido, Pedidos cierra esta
+            // pantalla en cuanto lo recibe y la factura de abajo se desmontaba
+            // antes de verse. Se avisa al cerrar la factura.
           }}
         />
-      </Modal>
 
-      <Modal
-        open={!!customizeFor}
-        onClose={() => setCustomizeFor(null)}
-        title={`Personalizar · ${customizeFor?.name ?? ""}`}
-      >
-        <CustomizeForm
-          product={customizeFor}
-          money={money}
-          onSkip={() => customizeFor && add(customizeFor, "")}
-          onConfirm={(txt) => customizeFor && add(customizeFor, txt)}
+        <Modal
+          open={!!lastSale}
+          onClose={() => {
+            setLastSale(null);
+            onDone?.();
+          }}
+          title={"Venta " + (lastSale?.number ?? "")}
+        >
+          {lastSale && <TicketPreview sale={lastSale} />}
+        </Modal>
+
+        <ConfirmDialog
+          open={confirmClear}
+          danger
+          title={mode === "order" ? "Limpiar pedido" : "Limpiar venta"}
+          message={
+            mode === "order"
+              ? "¿Limpiar el pedido? Se quitarán los productos, el cliente, la nota y el abono."
+              : "¿Limpiar la venta? Se quitarán los productos, el cliente y la nota."
+          }
+          verbo="Limpiar"
+          onCancel={() => setConfirmClear(false)}
+          onConfirm={clearAll}
         />
-      </Modal>
-
-      <PaymentModal
-        open={payOpen}
-        onClose={() => setPayOpen(false)}
-        totalUsd={amountDueUsd}
-        totalBs={amountDueBs}
-        money={money}
-        onConfirm={(payments) => {
-          const res = createSale({
-            items,
-            customerId: customer?.id ?? initialCustomerId ?? null,
-            customerName: displayCustomerName,
-            payments,
-            note,
-            orderId,
-          });
-          if (!res.ok) return toast.error(res.error!);
-          toast.success("Venta " + res.sale!.number + " registrada");
-          setLastSale(res.sale!);
-          setItems([]);
-          setCustomer(null);
-          setNote("");
-          setPayOpen(false);
-          // Igual que en saveOrder: explícito porque onDone puede desmontar
-          // el POS antes de que el autoguardado llegue a correr. Sólo aplica
-          // a venta directa (draftEnabled): al facturar un pedido existente
-          // no hay borrador propio que borrar aquí.
-          if (draftEnabled) clearDraft(mode, userId);
-          // `onDone` no va aquí: al facturar un pedido, Pedidos cierra esta
-          // pantalla en cuanto lo recibe y la factura de abajo se desmontaba
-          // antes de verse. Se avisa al cerrar la factura.
-        }}
-      />
-
-      <Modal
-        open={!!lastSale}
-        onClose={() => {
-          setLastSale(null);
-          onDone?.();
-        }}
-        title={"Venta " + (lastSale?.number ?? "")}
-      >
-        {lastSale && <TicketPreview sale={lastSale} />}
-      </Modal>
-
-      <ConfirmDialog
-        open={confirmClear}
-        danger
-        title={mode === "order" ? "Limpiar pedido" : "Limpiar venta"}
-        message={
-          mode === "order"
-            ? "¿Limpiar el pedido? Se quitarán los productos, el cliente, la nota y el abono."
-            : "¿Limpiar la venta? Se quitarán los productos, el cliente y la nota."
-        }
-        verbo="Limpiar"
-        onCancel={() => setConfirmClear(false)}
-        onConfirm={clearAll}
-      />
-    </div>
+      </div>
+    </>
   );
 }
 

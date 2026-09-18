@@ -283,6 +283,7 @@ export function queueProductCreate(product: Product) {
       // El formulario muestra 0 cuando nadie tocó el campo, así que 0 es lo que
       // corresponde mandar, no "nada".
       bsPrice: product.bsOnly ? (product.bsPrice ?? 0) : product.bsPrice,
+      bsPrices: product.bsPrices?.length ? product.bsPrices.map(wirePrice) : undefined,
       priceBand: product.priceBand,
       isCombo: product.isCombo,
       allowCustomization: product.allowCustomization,
@@ -331,6 +332,8 @@ export function queueProductUpdate(
   // Bs tiene que ir en el **mismo** parche o el servidor lo rechaza.
   if (patch.bsPrice !== undefined) payload.bsPrice = patch.bsPrice;
   else if (patch.bsOnly) payload.bsPrice = 0;
+  // Se reemplaza en bloque en el servidor, así que sólo viaja con contenido.
+  if (patch.bsPrices?.length) payload.bsPrices = patch.bsPrices.map(wirePrice);
   if (patch.priceBand !== undefined) payload.priceBand = patch.priceBand;
   if (patch.priceGroupId !== undefined) payload.priceGroupId = patch.priceGroupId;
   if (patch.isCombo !== undefined) payload.isCombo = patch.isCombo;

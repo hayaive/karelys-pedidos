@@ -45,6 +45,7 @@ import type {
  */
 export {
   bcvRate,
+  bsPriceOf,
   commonPriceTypeId,
   companyPriceRule,
   currentRate,

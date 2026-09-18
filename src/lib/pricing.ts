@@ -120,6 +120,16 @@ export function priceOf(_s: AppState, p: Product, priceTypeId: ID | undefined) {
   return pick(p.prices, priceTypeId);
 }
 
+/**
+ * Precio en Bs de un producto `bsOnly` para un tipo de precio. Mismo criterio
+ * que `priceOf` con su lista (`bsPrices`); un producto sin precios en Bs por
+ * tipo —todos los anteriores a esa lista— usa su único `bsPrice` para todos.
+ */
+export function bsPriceOf(p: Product, priceTypeId: ID | undefined) {
+  if (p.bsPrices?.length) return pick(p.bsPrices, priceTypeId);
+  return p.bsPrice ?? 0;
+}
+
 /* ── Reglas y alertas de precio ───────────────────────── */
 
 /**
@@ -212,30 +222,33 @@ export function priceAlertOf(
     rateStale: money.stale,
   };
 
+  const ptName = s.priceTypes.find((x) => x.id === priceTypeId)?.name ?? "";
+
   if (p.bsOnly) {
     // Sin tasa no hay nada que comparar: mostrar "$0,00" o sugerir 0 Bs sería
     // peor que no avisar. El aviso que toca en ese caso es el de la tasa.
     if (money.missing) return null;
-    const currentBs = p.bsPrice ?? 0;
+    const currentBs = bsPriceOf(p, priceTypeId);
     const currentUsd = money.toUsd(currentBs);
     if (currentUsd >= rule.minUsd) return null;
     const suggestedBs = money.toBsRounded(rule.targetUsd);
     return {
       ...base,
       mode: "bs",
+      priceTypeId,
+      priceTypeName: priceTypeId ? ptName : undefined,
       currentUsd,
       currentBs,
       suggestedBs,
       message:
-        `${p.name} está en ${bsLabel(currentBs)} (≈ ${fmtUsd(currentUsd)} ${rateLabel(money)}); ` +
-        `por debajo de ${fmtUsd(rule.minUsd)}. ` +
+        `${p.name} está en ${bsLabel(currentBs)}${priceTypeId ? ` (precio ${ptName})` : ""} ` +
+        `(≈ ${fmtUsd(currentUsd)} ${rateLabel(money)}); por debajo de ${fmtUsd(rule.minUsd)}. ` +
         `Precio sugerido: ${bsLabel(suggestedBs)} (≈ ${fmtUsd(rule.targetUsd)}).`,
     };
   }
 
   const currentUsd = priceOf(s, p, priceTypeId);
   if (currentUsd >= rule.minUsd) return null;
-  const ptName = s.priceTypes.find((x) => x.id === priceTypeId)?.name ?? "";
   return {
     ...base,
     mode: "usd",
@@ -254,8 +267,10 @@ export function priceAlertOf(
  * Pueden ser muchas a la vez —una subida de tasa baja el equivalente en USD de
  * todos los precios en Bs— y por eso la pantalla las corrige en bloque.
  *
- * Un producto `bsOnly` produce **una sola** alerta: su precio es un único número
- * en Bs, no hay Mayor/Detal que distinguir.
+ * Un producto sujeto al rango lo está en **todos** sus tipos de precio (Mayor y
+ * Detal): da una alerta por cada tipo que quedó por debajo, sea en USD o en Bs.
+ * La excepción es un producto `bsOnly` sin precios en Bs por tipo (un único
+ * `bsPrice` para todos): ahí sólo hay un número que medir y da una sola alerta.
  */
 export function priceAlerts(s: AppState): PriceAlert[] {
   const money = moneyOf(s);
@@ -266,20 +281,12 @@ export function priceAlerts(s: AppState): PriceAlert[] {
     if (!p.active) continue;
     if (!isPriceBanded(p)) continue;
 
-    if (p.bsOnly) {
-      const alert = priceAlertOf(s, p, undefined, money);
-      const key = p.id + "|bs";
-      if (alert && !seen.has(key)) {
-        seen.add(key);
-        out.push(alert);
-      }
-      continue;
-    }
-
-    for (const pt of s.priceTypes) {
-      const alert = priceAlertOf(s, p, pt.id, money);
+    const types: (ID | undefined)[] =
+      p.bsOnly && !p.bsPrices?.length ? [undefined] : s.priceTypes.map((pt) => pt.id);
+    for (const typeId of types) {
+      const alert = priceAlertOf(s, p, typeId, money);
       if (!alert) continue;
-      const key = p.id + "|" + pt.id;
+      const key = priceAlertKey(alert);
       if (seen.has(key)) continue;
       seen.add(key);
       out.push(alert);
@@ -292,12 +299,12 @@ export function priceAlerts(s: AppState): PriceAlert[] {
  * Clave estable de una alerta dentro de una lista de React.
  *
  * Vive aquí, junto a `priceAlerts`, porque es la identidad de lo que esa función
- * produce: un producto `bsOnly` da una sola alerta, y uno con precio en USD, una
- * por tipo de precio afectado. Dos pantallas la pintan (Inventario e Inicio) y
- * ninguna debería tener que deducirla por su cuenta.
+ * produce: una alerta por producto, moneda y tipo de precio afectado. Dos
+ * pantallas la pintan (Inventario e Inicio) y ninguna debería tener que
+ * deducirla por su cuenta.
  */
 export function priceAlertKey(a: PriceAlert) {
-  return a.productId + "|" + (a.mode === "bs" ? "bs" : (a.priceTypeId ?? ""));
+  return a.productId + "|" + a.mode + "|" + (a.priceTypeId ?? "");
 }
 
 /* ── Líneas y totales ─────────────────────────────────── */
@@ -350,13 +357,13 @@ export function itemsTotals(items: LineItem[], m: Money) {
  * puede llevar un producto al mayor y otro al detal. Por eso cambiarlo obliga a
  * recalcular el unitario y el subtotal de esa línea con el precio de ese tipo.
  *
- * Los productos con precio en Bs (`bsOnly`) no tienen tipo de precio: su
- * unitario es un monto en bolívares, así que se devuelven intactos.
+ * Los productos con precio en Bs (`bsOnly`) también tienen Mayor y Detal: su
+ * unitario es el monto en Bs de ese tipo (`bsPriceOf`), y el USD queda en 0.
  */
 export function repriceLine(s: AppState, it: LineItem, priceTypeId: ID): LineItem {
-  if (it.bsOnly) return it;
   const p = s.products.find((x) => x.id === it.productId);
   if (!p) return it;
+  if (it.bsOnly) return { ...it, priceTypeId, unitPriceBs: bsPriceOf(p, priceTypeId) };
   const unit = priceOf(s, p, priceTypeId);
   return {
     ...it,
@@ -394,12 +401,12 @@ export function mergeLines(items: LineItem[]): LineItem[] {
 
 /**
  * Tipo de precio común a todo el carrito, o `null` si las líneas mezclan tipos
- * (una al mayor y otra al detal) o no hay ninguna con tipo. Las líneas `bsOnly`
- * no cuentan: no tienen tipo de precio. Sirve para que el selector general diga
- * la verdad sobre el carrito en vez de mostrar el último tipo elegido.
+ * (una al mayor y otra al detal) o no hay ninguna. Cuentan todas, también las de
+ * precio en Bs, que tienen su Mayor y su Detal. Sirve para que el selector
+ * general diga la verdad sobre el carrito en vez de mostrar el último tipo elegido.
  */
 export function commonPriceTypeId(items: LineItem[]): ID | null {
-  const ids = new Set(items.filter((i) => !i.bsOnly).map((i) => i.priceTypeId));
+  const ids = new Set(items.map((i) => i.priceTypeId));
   return ids.size === 1 ? [...ids][0] : null;
 }
 

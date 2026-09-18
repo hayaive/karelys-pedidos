@@ -125,7 +125,16 @@ export interface Product {
   active: boolean;
   /** Producto que se vende sólo en Bs (no se convierte desde USD) */
   bsOnly?: boolean;
+  /**
+   * Precio en Bs del tipo predeterminado. En productos anteriores a `bsPrices`
+   * es el único precio en Bs y vale para todos los tipos (ver `bsPriceOf`).
+   */
   bsPrice?: number;
+  /**
+   * Precios en Bs por tipo de precio (Mayor, Detal…) de un producto `bsOnly`.
+   * Van aparte de `prices`, que siempre son USD. Se leen con `bsPriceOf`.
+   */
+  bsPrices?: ProductPrice[];
   /**
    * Precio sujeto al rango de Ajustes (mínimo/máximo en USD): si su equivalente
    * cae por debajo del mínimo, aparece en la lista de precios fuera de rango.
@@ -173,7 +182,10 @@ export interface PriceAlert {
   mode: "bs" | "usd";
   productId: ID;
   productName: string;
-  /** Sólo en modo `usd`: el tipo de precio que quedó por debajo del umbral. */
+  /**
+   * El tipo de precio que quedó por debajo del umbral. En modo `bs` falta sólo
+   * en productos sin precios en Bs por tipo (un único `bsPrice` para todos).
+   */
   priceTypeId?: ID;
   priceTypeName?: string;
   /** Precio efectivo en USD hoy. En modo `bs`, el equivalente de `currentBs`. */

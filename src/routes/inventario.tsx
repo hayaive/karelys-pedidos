@@ -16,13 +16,14 @@ import {
   Input,
   Modal,
   Palanca,
+  Segmented,
   Select,
   Textarea,
 } from "@/components/ui-kit";
 import { PriceAlertsAviso } from "@/components/price-alert";
 import { useMoney } from "@/hooks/use-money";
 import { logAudit, mutate, useAppState } from "@/lib/store";
-import { addMovement, priceOf } from "@/lib/business";
+import { addMovement, bsPriceOf, priceOf } from "@/lib/business";
 import { nextProductCode } from "@/lib/catalog";
 import { companyPriceRule, defaultPriceType, isPriceBanded, priceAlerts } from "@/lib/pricing";
 import { queueProductCreate, queueProductUpdate } from "@/lib/sync/mutations";
@@ -73,10 +74,8 @@ function Inventario() {
   const [borrandoProducto, setBorrandoProducto] = useState(false);
   const [mov, setMov] = useState<Product | null>(null);
 
-  // La cifra grande es la del tipo de precio predeterminado (Ajustes); los
-  // demás tipos van debajo, para no mostrar un solo precio sin decir cuál es.
+  // Encabezado de la columna de precio: el del tipo predeterminado (Ajustes).
   const tipoPorDefecto = defaultPriceType(s);
-  const otrosTipos = s.priceTypes.filter((pt) => pt.id !== tipoPorDefecto?.id);
 
   const list = s.products.filter(
     (p) =>
@@ -218,23 +217,7 @@ function Inventario() {
                           {p.minStock}
                         </td>
                         <td className="num px-4 py-2.5 text-right">
-                          {p.bsOnly ? (
-                            num(p.bsPrice ?? 0) + " Bs"
-                          ) : (
-                            <>
-                              <span className="block">
-                                {usd(priceOf(s, p, tipoPorDefecto?.id))}
-                              </span>
-                              {otrosTipos.map((pt) => (
-                                <span
-                                  key={pt.id}
-                                  className="block text-[11px] text-muted-foreground"
-                                >
-                                  {pt.name} {usd(priceOf(s, p, pt.id))}
-                                </span>
-                              ))}
-                            </>
-                          )}
+                          <PrecioProducto p={p} />
                         </td>
                         <td className="px-4 py-2.5">
                           <Badge tone={p.active ? "green" : "neutral"}>
@@ -274,23 +257,7 @@ function Inventario() {
                           <p className="num text-xs text-muted-foreground">{p.code}</p>
                         </div>
                         <span className="num shrink-0 text-right text-sm">
-                          {p.bsOnly ? (
-                            num(p.bsPrice ?? 0) + " Bs"
-                          ) : (
-                            <>
-                              <span className="block">
-                                {usd(priceOf(s, p, tipoPorDefecto?.id))}
-                              </span>
-                              {otrosTipos.map((pt) => (
-                                <span
-                                  key={pt.id}
-                                  className="block text-[11px] text-muted-foreground"
-                                >
-                                  {pt.name} {usd(priceOf(s, p, pt.id))}
-                                </span>
-                              ))}
-                            </>
-                          )}
+                          <PrecioProducto p={p} />
                         </span>
                       </div>
                       <div className="mt-2 flex items-center gap-2">
@@ -366,6 +333,29 @@ function Inventario() {
   );
 }
 
+/**
+ * Precio de un producto en la lista: el del tipo predeterminado grande y los
+ * demás tipos debajo, para no mostrar un solo precio sin decir cuál es. Siempre
+ * en la moneda del producto —USD o Bs—, nunca las dos a la vez.
+ */
+function PrecioProducto({ p }: { p: Product }) {
+  const s = useAppState();
+  const porDefecto = defaultPriceType(s);
+  const otros = s.priceTypes.filter((pt) => pt.id !== porDefecto?.id);
+  const fmt = (ptId: string | undefined) =>
+    p.bsOnly ? `${num(bsPriceOf(p, ptId))} Bs` : usd(priceOf(s, p, ptId));
+  return (
+    <>
+      <span className="block">{fmt(porDefecto?.id)}</span>
+      {otros.map((pt) => (
+        <span key={pt.id} className="block text-[11px] text-muted-foreground">
+          {pt.name} {fmt(pt.id)}
+        </span>
+      ))}
+    </>
+  );
+}
+
 function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () => void }) {
   const s = useAppState();
   const [f, setF] = useState<Partial<Product>>({ ...draft });
@@ -376,30 +366,49 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
   // vez de rechazarse. Se congela en el primer render: no debe recalcularse
   // sólo porque el catálogo cambió mientras el formulario seguía abierto.
   const [suggestedCode] = useState<string | null>(draft.id ? null : (draft.code ?? null));
+  /* Moneda del precio: se elige primero y define en qué se escriben Mayor y
+     Detal. USD → `prices`; Bs → `bsPrices` (con `bsPrice` = el del tipo
+     predeterminado, que exige el servidor). Nunca se muestran las dos a la vez. */
+  const moneda: "USD" | "BS" = f.bsOnly ? "BS" : "USD";
+  const tipoDefecto = defaultPriceType(s)?.id;
   const price = (ptId: string) => f.prices?.find((x) => x.priceTypeId === ptId)?.amount ?? 0;
   const setPrice = (ptId: string, v: number) => {
     const rest = (f.prices ?? []).filter((x) => x.priceTypeId !== ptId);
     setF({ ...f, prices: [...rest, { priceTypeId: ptId, amount: v }] });
   };
-  /* Precio sujeto al rango de Ajustes (switch de abajo). Es **informativo y no
-     bloquea**: sólo hace que el producto aparezca en la lista de precios por
-     debajo del mínimo cuando su equivalente en USD se queda corto —también
-     porque suba la tasa, sin que nadie lo edite—. Un producto viejo sin el campo
-     se muestra con lo que vale hoy (`isPriceBanded`: el genérico de tortas frías
-     queda marcado). */
+  // Un producto en Bs anterior a los precios por tipo tiene un único `bsPrice`:
+  // se muestra en todos los tipos hasta que alguien escriba uno distinto.
+  const bsPrice = (ptId: string) =>
+    f.bsPrices?.length
+      ? (f.bsPrices.find((x) => x.priceTypeId === ptId)?.amount ?? 0)
+      : (f.bsPrice ?? 0);
+  const setBsPrice = (ptId: string, v: number) => {
+    const list = s.priceTypes.map((pt) => ({
+      priceTypeId: pt.id,
+      amount: pt.id === ptId ? v : bsPrice(pt.id),
+    }));
+    const porDefecto = list.find((x) => x.priceTypeId === tipoDefecto) ?? list[0];
+    setF({ ...f, bsPrices: list, bsPrice: porDefecto?.amount ?? v });
+  };
+  const precioEn = (ptId: string) => (moneda === "BS" ? bsPrice(ptId) : price(ptId));
+
+  /* Precio sujeto al rango de Ajustes (interruptor de abajo). Aplica a **todos**
+     los tipos (Mayor y Detal). Es informativo y no bloquea: el producto aparece
+     en la lista de precios por debajo del mínimo cuando el equivalente en USD de
+     alguno se queda corto —también porque suba la tasa, sin que nadie lo edite—.
+     Un producto viejo sin el campo se muestra con lo que vale hoy
+     (`isPriceBanded`: el genérico de tortas frías queda marcado). */
   const money = useMoney();
   const sujeto = f.priceBand ?? (f.id ? isPriceBanded(f as Product) : false);
   const regla = companyPriceRule(s);
-  // Precio del borrador en USD, para avisar aquí mismo si ya nace por debajo:
-  // el de Bs a la tasa de hoy, o el menor de los precios por tipo.
-  const precioUsd = f.bsOnly
-    ? money.missing
-      ? null
-      : money.toUsd(f.bsPrice ?? 0)
-    : s.priceTypes.length
-      ? Math.min(...s.priceTypes.map((pt) => price(pt.id)))
-      : null;
-  const debajo = sujeto && precioUsd !== null && precioUsd < regla.minUsd;
+  // Tipos que ya nacen por debajo del mínimo (en Bs, a la tasa de hoy).
+  const debajo = !sujeto
+    ? []
+    : s.priceTypes.filter((pt) => {
+        if (moneda === "BS" && money.missing) return false;
+        const enUsd = moneda === "BS" ? money.toUsd(bsPrice(pt.id)) : price(pt.id);
+        return enUsd < regla.minUsd;
+      });
 
   return (
     <div className="grid gap-3 sm:grid-cols-2">
@@ -457,69 +466,68 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
           onChange={(e) => setF({ ...f, minStock: parseFloat(e.target.value) || 0 })}
         />
       </Field>
-      <div className="sm:col-span-2">
-        <p className="mb-2 text-xs font-medium text-muted-foreground">Precios por tipo (USD)</p>
+      <div className="space-y-3 rounded-md border border-border bg-sup-2 p-3 sm:col-span-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="text-etiqueta font-[550] text-texto">Precio</p>
+            <p className="text-[0.79rem] text-texto-2">Primero elige en qué moneda se vende.</p>
+          </div>
+          <Segmented
+            ariaLabel="Moneda del precio"
+            options={[
+              { value: "USD", label: "USD" },
+              { value: "BS", label: "Bolívares" },
+            ]}
+            value={moneda}
+            onChange={(v) => setF({ ...f, bsOnly: v === "BS" })}
+          />
+        </div>
         <div className="grid gap-2 sm:grid-cols-3">
           {s.priceTypes.map((pt) => (
-            <Field key={pt.id} label={pt.name}>
+            <Field
+              // La moneda va en la clave: al cambiarla el campo se vuelve a montar
+              // con el precio de esa moneda (es un input no controlado).
+              key={`${moneda}-${pt.id}`}
+              label={`${pt.name} (${moneda === "BS" ? "Bs" : "USD"})`}
+            >
               <Input
                 className="num"
                 inputMode="decimal"
                 // Input NO controlado a propósito (`defaultValue`, no `value`):
                 // si se ata `value` al número ya parseado, cada tecla dispara un
-                // re-render que reformatea `f.prices` de vuelta a texto y le pisa
+                // re-render que reformatea el precio de vuelta a texto y le pisa
                 // al usuario lo que acaba de teclear (el punto decimal, un cero
-                // final) antes de que pueda seguir escribiendo — con montos en
-                // USD eso hacía prácticamente imposible escribir centavos y podía
-                // terminar guardando un número muy distinto al tecleado. `f.prices`
-                // sigue siendo la fuente de verdad para "Guardar": `onChange` la
-                // sigue actualizando, sólo dejó de retroalimentar el campo.
-                defaultValue={String(price(pt.id))}
-                onChange={(e) => setPrice(pt.id, parseFloat(e.target.value.replace(",", ".")) || 0)}
+                // final) antes de que pueda seguir escribiendo. El estado del
+                // formulario sigue siendo la fuente de verdad para "Guardar".
+                defaultValue={String(precioEn(pt.id))}
+                onChange={(e) => {
+                  const v = parseFloat(e.target.value.replace(",", ".")) || 0;
+                  if (moneda === "BS") setBsPrice(pt.id, v);
+                  else setPrice(pt.id, v);
+                }}
               />
             </Field>
           ))}
         </div>
-      </div>
-      <Field label="Sólo en bolívares">
-        <Select
-          value={f.bsOnly ? "si" : "no"}
-          onChange={(e) => setF({ ...f, bsOnly: e.target.value === "si" })}
-        >
-          <option value="no">No</option>
-          <option value="si">Sí (precio fijo en Bs)</option>
-        </Select>
-      </Field>
-      {f.bsOnly && (
-        <Field label="Precio en Bs">
-          <Input
-            className="num"
-            // Mismo motivo que el precio en USD de arriba: no controlado para no
-            // pisarle al usuario el punto decimal mientras escribe.
-            defaultValue={String(f.bsPrice ?? 0)}
-            onChange={(e) =>
-              setF({ ...f, bsPrice: parseFloat(e.target.value.replace(",", ".")) || 0 })
-            }
-          />
-        </Field>
-      )}
-      <div className="rounded-md border border-border bg-sup-2 p-3 sm:col-span-2">
         <Palanca
           checked={sujeto}
           onChange={(v) => setF({ ...f, priceBand: v })}
           hint={
             <>
               Mínimo {usd(regla.minUsd)} · máximo {usd(regla.targetUsd)} (Ajustes · Impresión y
-              numeración). Si el precio queda por debajo del mínimo —también porque suba la tasa—
-              aparece en la lista de precios fuera de rango para corregirlo. No bloquea la venta.
+              numeración). Aplica a todos los tipos de precio: si alguno queda por debajo del mínimo
+              —también porque suba la tasa— aparece en la lista de precios fuera de rango para
+              corregirlo. No bloquea la venta.
             </>
           }
         >
           Sujetar el precio al rango mínimo y máximo
         </Palanca>
-        {debajo && (
-          <p className="num mt-2 text-[0.79rem] font-medium text-rojo">
-            Con la tasa de hoy este precio equivale a {usd(precioUsd!)}: está por debajo del mínimo.
+        {debajo.length > 0 && (
+          <p className="mt-2 text-[0.79rem] font-medium text-rojo">
+            {debajo.map((pt) => pt.name).join(" y ")} {debajo.length === 1 ? "está" : "están"} por
+            debajo del mínimo de {usd(regla.minUsd)}
+            {moneda === "BS" && " con la tasa de hoy"}.
           </p>
         )}
       </div>
@@ -548,6 +556,15 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
           onClick={() => {
             if (!f.name?.trim() || !f.code?.trim())
               return toast.error("Código y nombre son obligatorios");
+            // Un producto nuevo nace con todos sus precios (Mayor y Detal) en la
+            // moneda elegida; uno en 0 se cobraría gratis.
+            if (!f.id) {
+              const faltan = s.priceTypes.filter((pt) => !(precioEn(pt.id) > 0));
+              if (faltan.length)
+                return toast.error(
+                  `Escribe el precio ${faltan.map((pt) => pt.name).join(" y ")} en ${moneda === "BS" ? "bolívares" : "USD"}`,
+                );
+            }
             // El contrato exige cantidades no negativas. Se comprueba aquí porque
             // un rechazo del servidor es **permanente**: la mutación sale de la
             // cola, el producto se queda sólo en este navegador y el siguiente
@@ -612,6 +629,7 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
                   active: f.active ?? true,
                   bsOnly: f.bsOnly,
                   bsPrice: f.bsPrice,
+                  bsPrices: f.bsOnly ? f.bsPrices : undefined,
                   priceBand: f.priceBand ?? false,
                   prices: f.prices ?? [],
                   createdAt: new Date().toISOString(),

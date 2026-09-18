@@ -22,6 +22,7 @@ import {
   TORTA_QUESILLO_CODE,
   TORTA_QUESILLO_NAME,
 } from "./pricing-rules";
+import { bsPriceOf, defaultPriceType } from "./pricing";
 import type { AppState, Category, ID, PriceAlert, Product, ProductPrice } from "./types";
 
 /* ── Utilidades ───────────────────────────────────────── */
@@ -391,7 +392,7 @@ export function ensureColdCakeFamily(s: AppState): string[] {
  */
 export type PriceFixTarget =
   | { mode: "usd"; productId: ID; priceTypeId: ID; amountUsd: number; fromUsd: number }
-  | { mode: "bs"; productId: ID; bsPrice: number; fromBs: number };
+  | { mode: "bs"; productId: ID; bsPrice: number; bsPrices: ProductPrice[]; fromBs: number };
 
 /**
  * Aplica la corrección que pide una `PriceAlert` con el monto que confirmó el
@@ -413,9 +414,24 @@ export function applyPriceAlertFix(
   if (!p) return null;
 
   if (alert.mode === "bs") {
-    const fromBs = p.bsPrice ?? 0;
-    p.bsPrice = amount;
-    return { mode: "bs", productId: p.id, bsPrice: amount, fromBs };
+    const fromBs = bsPriceOf(p, alert.priceTypeId);
+    // Un producto viejo sin precios en Bs por tipo arranca su lista con el precio
+    // de hoy en todos los tipos. Se corrige el tipo de la alerta, o todos si la
+    // alerta no traía tipo (había un solo precio en Bs).
+    const list: ProductPrice[] = p.bsPrices?.length
+      ? p.bsPrices.map((x) => ({ ...x }))
+      : s.priceTypes.map((pt) => ({ priceTypeId: pt.id, amount: p.bsPrice ?? 0 }));
+    for (const cell of list) {
+      if (!alert.priceTypeId || cell.priceTypeId === alert.priceTypeId) cell.amount = amount;
+    }
+    if (alert.priceTypeId && !list.some((c) => c.priceTypeId === alert.priceTypeId)) {
+      list.push({ priceTypeId: alert.priceTypeId, amount });
+    }
+    p.bsPrices = list;
+    // `bsPrice` sigue siendo el del tipo predeterminado (lo exige el servidor en
+    // todo producto `bsOnly` y lo leen los clientes viejos).
+    p.bsPrice = bsPriceOf(p, defaultPriceType(s)?.id);
+    return { mode: "bs", productId: p.id, bsPrice: p.bsPrice, bsPrices: list, fromBs };
   }
 
   if (!alert.priceTypeId) return null;
@@ -423,5 +439,11 @@ export function applyPriceAlertFix(
   const fromUsd = cell?.amount ?? 0;
   if (cell) cell.amount = amount;
   else p.prices.push({ priceTypeId: alert.priceTypeId, amount });
-  return { mode: "usd", productId: p.id, priceTypeId: alert.priceTypeId, amountUsd: amount, fromUsd };
+  return {
+    mode: "usd",
+    productId: p.id,
+    priceTypeId: alert.priceTypeId,
+    amountUsd: amount,
+    fromUsd,
+  };
 }

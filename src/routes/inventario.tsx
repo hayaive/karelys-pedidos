@@ -21,6 +21,7 @@ import {
 import { PriceAlertAviso } from "@/components/price-alert";
 import { logAudit, mutate, useAppState } from "@/lib/store";
 import { addMovement, priceOf } from "@/lib/business";
+import { nextProductCode } from "@/lib/catalog";
 import {
   companyPriceRule,
   defaultPriceType,
@@ -102,7 +103,9 @@ function Inventario() {
               variant="amber"
               onClick={() =>
                 setEdit({
-                  code: "",
+                  // Sugerido según la secuencia de Ajustes · Impresión y
+                  // numeración; el campo sigue siendo editable en el formulario.
+                  code: nextProductCode(s),
                   name: "",
                   categoryId: s.categories[0]?.id,
                   stock: 0,
@@ -345,6 +348,14 @@ function Inventario() {
         onCancel={() => setDel(null)}
         onConfirm={() => {
           mutate((st) => {
+            // El código se retira aquí también, no sólo cuando llega el
+            // tombstone del servidor (ver `applyDeletions` en lib/sync/apply):
+            // en lo que la mutación de borrado sube, `nextProductCode` no debe
+            // ofrecer un código que este mismo equipo acaba de dejar libre "a
+            // medias" en pantalla pero que el servidor todavía cree ocupado.
+            const retirados = new Set(st.retiredProductCodes ?? []);
+            retirados.add(del!.code);
+            st.retiredProductCodes = [...retirados];
             st.products = st.products.filter((x) => x.id !== del!.id);
             logAudit("producto_eliminado", "product", del!.id);
           });
@@ -359,6 +370,13 @@ function Inventario() {
 function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () => void }) {
   const s = useAppState();
   const [f, setF] = useState<Partial<Product>>({ ...draft });
+  // El código con el que se abrió el formulario si es un producto nuevo (lo
+  // puso `nextProductCode` al pulsar "Nuevo producto"). Sirve para distinguir,
+  // al guardar, "el admin escribió este código a mano" de "sigue siendo el
+  // sugerido y mientras tanto se ocupó": sólo el segundo caso se recalcula en
+  // vez de rechazarse. Se congela en el primer render: no debe recalcularse
+  // sólo porque el catálogo cambió mientras el formulario seguía abierto.
+  const [suggestedCode] = useState<string | null>(draft.id ? null : (draft.code ?? null));
   const price = (ptId: string) => f.prices?.find((x) => x.priceTypeId === ptId)?.amount ?? 0;
   const setPrice = (ptId: string, v: number) => {
     const rest = (f.prices ?? []).filter((x) => x.priceTypeId !== ptId);
@@ -376,8 +394,17 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
 
   return (
     <div className="grid gap-3 sm:grid-cols-2">
-      <Field label="Código">
-        <Input value={f.code ?? ""} onChange={(e) => setF({ ...f, code: e.target.value })} />
+      <Field
+        label="Código"
+        hint={!f.id ? "Automático según Ajustes · puedes cambiarlo" : undefined}
+      >
+        <Input
+          value={f.code ?? ""}
+          // El servidor guarda los códigos en mayúsculas (misma serie que
+          // `nextProductCode`); pasarlo aquí evita que "p061" y "P061" se vean
+          // como códigos distintos hasta que el guardado los normalice.
+          onChange={(e) => setF({ ...f, code: e.target.value.toUpperCase() })}
+        />
       </Field>
       <Field label="Nombre">
         <Input value={f.name ?? ""} onChange={(e) => setF({ ...f, name: e.target.value })} />
@@ -509,6 +536,33 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
             if ((f.stock ?? 0) < 0 || (f.minStock ?? 0) < 0)
               return toast.error("El stock y el stock mínimo no pueden ser negativos");
 
+            // Validación del código: el servidor rechazaría igual un código ya
+            // usado por otro producto o uno retirado, y ese rechazo es
+            // permanente (ver el comentario de arriba), así que se ataja aquí.
+            let code = f.code!.trim().toUpperCase();
+            const retirados = new Set(s.retiredProductCodes ?? []);
+            const usadoPorOtro = (c: string) =>
+              s.products.some((p) => p.code === c && p.id !== f.id);
+
+            if (!f.id && code === suggestedCode && (usadoPorOtro(code) || retirados.has(code))) {
+              // El código sugerido al abrir el formulario se ocupó mientras
+              // tanto (llegó un producto por sync): se recalcula en vez de
+              // rechazar, la misma situación que resuelve el servidor con
+              // `renumbered` cuando esto se escapa a una mutación en cola.
+              code = nextProductCode(s);
+              toast.info(`El código sugerido ya se había ocupado: se usa ${code}`);
+            }
+
+            if (usadoPorOtro(code)) return toast.error(`El código ${code} ya lo usa otro producto`);
+            // Sólo un código **nuevo** puede chocar con un retirado. Al editar sin
+            // tocar el código no se mira: un producto borrado aquí vuelve con el
+            // siguiente bootstrap (el borrado no sube al servidor) y su código ya
+            // quedó en `retiredProductCodes`, así que la comprobación lo dejaría
+            // sin poder guardarse nunca más.
+            const codigoOriginal = f.id ? s.products.find((p) => p.id === f.id)?.code : undefined;
+            if (code !== codigoOriginal && retirados.has(code))
+              return toast.error(`El código ${code} está retirado y no se puede reutilizar`);
+
             const desiredStock = f.stock ?? 0;
             let created: Product | undefined;
             let edited: Product | undefined;
@@ -519,14 +573,17 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
                 const ex = st.products.find((x) => x.id === f.id);
                 if (ex) {
                   stockBefore = ex.stock;
-                  Object.assign(ex, f);
+                  // `code` no se toca al editar un producto existente: sólo
+                  // pudo cambiar por una corrección a mano, y esa corrección
+                  // ya pasó por la misma validación de arriba.
+                  Object.assign(ex, f, { code });
                   edited = ex;
                 }
                 logAudit("producto_editado", "product", f.id);
               } else {
                 const p: Product = {
                   id: uid(),
-                  code: f.code!,
+                  code,
                   name: f.name!,
                   description: f.description,
                   categoryId: f.categoryId!,

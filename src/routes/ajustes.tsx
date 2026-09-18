@@ -26,6 +26,7 @@ import {
 } from "@/components/ui-kit";
 import { getState, logAudit, mutate, resetDatabase, useAppState } from "@/lib/store";
 import { categoryErrorText, createCategory, useCategoryAccess } from "@/lib/sync/categories";
+import { companyErrorText, updateCompany, useCompanyAccess } from "@/lib/sync/company";
 import {
   createPriceType,
   deletePriceType,
@@ -34,9 +35,21 @@ import {
   setDefaultPriceType,
   usePriceTypeAccess,
 } from "@/lib/sync/price-types";
+import {
+  DEFAULT_PRODUCT_CODE_DIGITS,
+  DEFAULT_PRODUCT_CODE_PREFIX,
+  DEFAULT_PRODUCT_CODE_START,
+  nextProductCode,
+} from "@/lib/catalog";
 import { uid } from "@/lib/seed";
 import { dt, num, usd } from "@/lib/format";
-import { ALL_PERMISSIONS, type Permission, type PriceType, type User } from "@/lib/types";
+import {
+  ALL_PERMISSIONS,
+  type CompanySettings,
+  type Permission,
+  type PriceType,
+  type User,
+} from "@/lib/types";
 import { useSession } from "@/lib/auth";
 
 export const Route = createFileRoute("/ajustes")({
@@ -791,36 +804,183 @@ function Pagos() {
   );
 }
 
+/**
+ * Prefijo de la secuencia de códigos de producto. Calca la validación del
+ * backend (`UpdateCompanyDto`, ARCHITECTURE.md): empieza con una letra, sólo
+ * `A-Z0-9-`, hasta 8 caracteres y nunca termina en dígito (para que el número
+ * que le sigue siempre sea inequívoco al leerlo).
+ */
+const PRODUCT_CODE_PREFIX_RE = /^[A-Z]([A-Z0-9-]{0,6}[A-Z-])?$/;
+
+/** Los únicos campos que `PATCH /company` acepta desde esta pestaña, y sólo los que cambiaron. */
+function diffCompanyFields(base: CompanySettings, form: CompanySettings): Partial<CompanySettings> {
+  const patch: Partial<CompanySettings> = {};
+  if (form.ticketFooter !== base.ticketFooter) patch.ticketFooter = form.ticketFooter;
+  if (form.salePrefix !== base.salePrefix) patch.salePrefix = form.salePrefix;
+  if (form.orderPrefix !== base.orderPrefix) patch.orderPrefix = form.orderPrefix;
+  if (form.bsRounding !== base.bsRounding) patch.bsRounding = form.bsRounding;
+  if (form.coldCakeMin !== base.coldCakeMin) patch.coldCakeMin = form.coldCakeMin;
+  if (form.coldCakeMax !== base.coldCakeMax) patch.coldCakeMax = form.coldCakeMax;
+  if (form.productCodePrefix !== base.productCodePrefix)
+    patch.productCodePrefix = form.productCodePrefix;
+  if (form.productCodeDigits !== base.productCodeDigits)
+    patch.productCodeDigits = form.productCodeDigits;
+  if (form.productCodeStart !== base.productCodeStart)
+    patch.productCodeStart = form.productCodeStart;
+  return patch;
+}
+
 function Impresion() {
   const s = useAppState();
-  const [f, setF] = useState(s.company);
+  const acceso = useCompanyAccess();
+  const [f, setF] = useState<CompanySettings>({
+    ...s.company,
+    productCodePrefix: s.company.productCodePrefix ?? DEFAULT_PRODUCT_CODE_PREFIX,
+    productCodeDigits: s.company.productCodeDigits ?? DEFAULT_PRODUCT_CODE_DIGITS,
+    productCodeStart: s.company.productCodeStart ?? DEFAULT_PRODUCT_CODE_START,
+  });
+  const [guardando, setGuardando] = useState(false);
+
+  const bloqueado = acceso.mode === "blocked" || guardando;
+
+  // Vista previa en vivo: sólo se calcula con una configuración que ya pasaría
+  // la validación, para no enseñar un código que ni siquiera se podría guardar.
+  const prefijoNorm = (f.productCodePrefix ?? DEFAULT_PRODUCT_CODE_PREFIX).trim().toUpperCase();
+  const prefijoValido = PRODUCT_CODE_PREFIX_RE.test(prefijoNorm);
+  const digitosValidos =
+    Number.isInteger(f.productCodeDigits) && f.productCodeDigits! >= 1 && f.productCodeDigits! <= 6;
+  const pisoValido =
+    Number.isInteger(f.productCodeStart) &&
+    f.productCodeStart! >= 1 &&
+    f.productCodeStart! <= 99999999;
+  const proximoCodigo =
+    prefijoValido && digitosValidos && pisoValido
+      ? nextProductCode({
+          ...s,
+          company: {
+            ...s.company,
+            productCodePrefix: prefijoNorm,
+            productCodeDigits: f.productCodeDigits,
+            productCodeStart: f.productCodeStart,
+          },
+        })
+      : null;
+
+  async function guardar() {
+    if (bloqueado) return;
+
+    /* Un máximo por debajo del mínimo deja la regla sin sentido: la alerta
+       pediría "sube el precio" a un valor que la vuelve a disparar.
+       `companyPriceRule` dejó de corregirlo en silencio a propósito, así que
+       el error se para aquí, que es donde el usuario puede arreglarlo. */
+    if (!Number.isFinite(f.coldCakeMin) || !Number.isFinite(f.coldCakeMax))
+      return toast.error("El mínimo y el máximo de tortas frías deben ser números");
+    if (f.coldCakeMin < 0 || f.coldCakeMax < 0)
+      return toast.error("El mínimo y el máximo de tortas frías no pueden ser negativos");
+    if (f.coldCakeMax < f.coldCakeMin)
+      return toast.error(
+        `El máximo de tortas frías (${usd(f.coldCakeMax)}) no puede ser menor que el mínimo (${usd(f.coldCakeMin)})`,
+      );
+
+    if (!prefijoValido)
+      return toast.error("El prefijo de productos no es válido", {
+        description:
+          "Empieza con una letra, usa sólo A-Z, 0-9 y guiones, no termina en dígito y tiene hasta 8 caracteres.",
+      });
+    if (!digitosValidos)
+      return toast.error("Los dígitos del código de producto deben ser un entero entre 1 y 6");
+    if (!pisoValido)
+      return toast.error(
+        "El piso de la secuencia de productos debe ser un entero entre 1 y 99.999.999",
+      );
+
+    const normalizado: CompanySettings = {
+      ...f,
+      productCodePrefix: prefijoNorm,
+    };
+
+    // `saleNext` no pasa por `PATCH /company`: es del servidor en cuanto hay
+    // backend (el DTO ni lo declara). Sólo se escribe directo en local cuando
+    // este equipo no tiene con quién sincronizarlo.
+    if (acceso.mode === "local" && normalizado.saleNext !== s.company.saleNext) {
+      mutate((st) => {
+        st.company = { ...st.company, saleNext: normalizado.saleNext };
+      });
+    }
+
+    const patch = diffCompanyFields(s.company, normalizado);
+    if (!Object.keys(patch).length) {
+      setF(normalizado);
+      toast.success("Configuración guardada");
+      return;
+    }
+
+    setGuardando(true);
+    try {
+      const result = await updateCompany(patch);
+      setF({
+        ...result.company,
+        productCodePrefix: result.company.productCodePrefix ?? DEFAULT_PRODUCT_CODE_PREFIX,
+        productCodeDigits: result.company.productCodeDigits ?? DEFAULT_PRODUCT_CODE_DIGITS,
+        productCodeStart: result.company.productCodeStart ?? DEFAULT_PRODUCT_CODE_START,
+      });
+      if (result.degraded) {
+        toast.warning("Configuración guardada", {
+          description:
+            "La secuencia de códigos quedó guardada solo en este equipo hasta que se actualice el servidor.",
+        });
+      } else {
+        toast.success("Configuración guardada");
+      }
+    } catch (err) {
+      toast.error("No se pudo guardar la configuración", { description: companyErrorText(err) });
+    } finally {
+      setGuardando(false);
+    }
+  }
+
   return (
     <Card className="max-w-2xl">
       <CardHead title="Impresión y numeración" sub="Ticket térmico 58mm y correlativos" />
+      {acceso.mode === "blocked" && (
+        <div className="px-4 pt-4">
+          <Aviso tone="amber" icon={IcoAlerta}>
+            {acceso.reason}
+          </Aviso>
+        </div>
+      )}
       <div className="grid gap-3 p-4 sm:grid-cols-2">
         <Field label="Mensaje final del ticket">
           <Input
             value={f.ticketFooter}
+            disabled={bloqueado}
             onChange={(e) => setF({ ...f, ticketFooter: e.target.value })}
           />
         </Field>
         <Field label="Prefijo de ventas">
           <Input
             value={f.salePrefix}
+            disabled={bloqueado}
             onChange={(e) => setF({ ...f, salePrefix: e.target.value })}
           />
         </Field>
-        <Field label="Próximo número de venta">
+        <Field
+          label="Próximo número de venta"
+          hint={acceso.mode === "remote" ? "Lo asigna el servidor." : undefined}
+        >
           <Input
             className="num"
             type="number"
             value={f.saleNext}
+            readOnly={acceso.mode === "remote"}
+            disabled={bloqueado}
             onChange={(e) => setF({ ...f, saleNext: parseInt(e.target.value) || 1 })}
           />
         </Field>
         <Field label="Prefijo de pedidos">
           <Input
             value={f.orderPrefix}
+            disabled={bloqueado}
             onChange={(e) => setF({ ...f, orderPrefix: e.target.value })}
           />
         </Field>
@@ -829,6 +989,7 @@ function Impresion() {
             className="num"
             type="number"
             value={f.bsRounding}
+            disabled={bloqueado}
             onChange={(e) => setF({ ...f, bsRounding: parseFloat(e.target.value) || 1 })}
           />
         </Field>
@@ -839,6 +1000,7 @@ function Impresion() {
           <Input
             className="num"
             inputMode="decimal"
+            disabled={bloqueado}
             // No controlado a propósito: si se ata `value` al número ya
             // parseado, cada tecla reformatea de vuelta a texto y le pisa al
             // usuario el punto decimal antes de que pueda seguir escribiendo
@@ -856,35 +1018,79 @@ function Impresion() {
           <Input
             className="num"
             inputMode="decimal"
+            disabled={bloqueado}
             defaultValue={String(f.coldCakeMax)}
             onChange={(e) =>
               setF({ ...f, coldCakeMax: parseFloat(e.target.value.replace(",", ".")) || 1.2 })
             }
           />
         </Field>
+
+        <div className="sm:col-span-2 border-t border-border pt-3">
+          <p className="mb-1 text-etiqueta font-[550] text-texto">Códigos de producto</p>
+          <p className="mb-2 text-[0.79rem] text-texto-2">
+            Secuencia automática que Inventario usa para sugerir el código de un producto nuevo.
+          </p>
+        </div>
+        <Field
+          label="Prefijo de productos"
+          hint="Empieza con letra, sólo A-Z/0-9/guiones, no termina en dígito."
+        >
+          <Input
+            value={f.productCodePrefix}
+            disabled={bloqueado}
+            maxLength={8}
+            onChange={(e) => setF({ ...f, productCodePrefix: e.target.value.toUpperCase() })}
+          />
+        </Field>
+        <Field label="Dígitos" hint="Entre 1 y 6.">
+          <Input
+            className="num"
+            type="number"
+            min={1}
+            max={6}
+            value={f.productCodeDigits}
+            disabled={bloqueado}
+            onChange={(e) =>
+              setF({
+                ...f,
+                productCodeDigits: parseInt(e.target.value) || DEFAULT_PRODUCT_CODE_DIGITS,
+              })
+            }
+          />
+        </Field>
+        <Field
+          label="Continuar desde"
+          hint="Piso de la búsqueda: si ese número ya está en uso, se ofrece el siguiente libre."
+        >
+          <Input
+            className="num"
+            type="number"
+            min={1}
+            max={99999999}
+            value={f.productCodeStart}
+            disabled={bloqueado}
+            onChange={(e) =>
+              setF({
+                ...f,
+                productCodeStart: parseInt(e.target.value) || DEFAULT_PRODUCT_CODE_START,
+              })
+            }
+          />
+        </Field>
+        <div className="flex items-end">
+          <p className="text-sm text-muted-foreground">
+            Próximo código:{" "}
+            <span className="num font-medium text-texto">{proximoCodigo ?? "—"}</span>
+          </p>
+        </div>
+
         <div className="sm:col-span-2">
           <Btn
             variant="amber"
-            onClick={() => {
-              /* Un máximo por debajo del mínimo deja la regla sin sentido: la
-                 alerta pediría "sube el precio" a un valor que la vuelve a
-                 disparar. `companyPriceRule` dejó de corregirlo en silencio a
-                 propósito, así que el error se para aquí, que es donde el
-                 usuario puede arreglarlo. */
-              if (!Number.isFinite(f.coldCakeMin) || !Number.isFinite(f.coldCakeMax))
-                return toast.error("El mínimo y el máximo de tortas frías deben ser números");
-              if (f.coldCakeMin < 0 || f.coldCakeMax < 0)
-                return toast.error("El mínimo y el máximo de tortas frías no pueden ser negativos");
-              if (f.coldCakeMax < f.coldCakeMin)
-                return toast.error(
-                  `El máximo de tortas frías (${usd(f.coldCakeMax)}) no puede ser menor que el mínimo (${usd(f.coldCakeMin)})`,
-                );
-
-              mutate((st) => {
-                st.company = { ...st.company, ...f };
-              });
-              toast.success("Configuración guardada");
-            }}
+            cargando={guardando}
+            disabled={bloqueado}
+            onClick={() => void guardar()}
           >
             Guardar
           </Btn>

@@ -465,6 +465,20 @@ export interface CompanySettings {
   bsRounding: number;
   /** Horas tras las que la tasa BCV se considera vencida y hay que refrescarla. */
   rateMaxAgeHours?: number;
+  /**
+   * Secuencia automática de los códigos de producto: un **piso configurable**,
+   * no un contador. `nextProductCode` (lib/catalog) parte de `productCodeStart`
+   * y sube hasta el primer número libre según lo que ya exista (productos vivos,
+   * retirados y los sabores legado); nunca reasigna uno ocupado, así que dos
+   * altas seguidas no chocan aunque nadie haya tocado este ajuste.
+   *
+   * Opcionales con default porque una instalación existente (o un backend que
+   * todavía no los devuelve) no los trae: `"P"` / 3 dígitos / piso 1, que es
+   * justo la serie que ya tenía el catálogo semilla.
+   */
+  productCodePrefix?: string;
+  productCodeDigits?: number;
+  productCodeStart?: number;
   shortcuts?: Record<string, string>;
   /** Zona del día contable. La fija el servidor (`America/Caracas`). */
   timezone?: string;
@@ -490,4 +504,14 @@ export interface AppState {
   audit: AuditLog[];
   company: CompanySettings;
   sessionUserId: ID | null;
+  /**
+   * Códigos de producto retirados (el producto que los tenía ya no existe, por
+   * borrado local o tombstone del servidor). Se guardan para que
+   * `nextProductCode` no proponga uno que el servidor rechazaría: ver
+   * `applyBootstrap` y `applyDeletions` en lib/sync/apply, que sólo agregan,
+   * nunca quitan. Opcional por lo mismo que el resto de campos nuevos: una
+   * instalación existente no lo trae hasta su próximo bootstrap; se lee con
+   * `s.retiredProductCodes ?? []`.
+   */
+  retiredProductCodes?: string[];
 }

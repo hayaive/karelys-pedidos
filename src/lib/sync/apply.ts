@@ -142,6 +142,20 @@ function replaceAuthoritative<T extends WithId>(
 const byCreatedDesc = (a: { createdAt: string }, b: { createdAt: string }) =>
   b.createdAt.localeCompare(a.createdAt);
 
+/**
+ * Une códigos de producto retirados sin achicar nunca la lista local: un
+ * bootstrap más viejo, o uno que traiga una ventana distinta, no debe hacer
+ * que `nextProductCode` (lib/catalog) vuelva a ofrecer un código que el
+ * servidor ya rechazaría. Ver el comentario de `retiredProductCodes` en
+ * lib/types.
+ */
+function unionRetiredCodes(local: string[] | undefined, incoming: string[]): string[] {
+  if (!incoming.length) return local ?? [];
+  const set = new Set(local ?? []);
+  for (const code of incoming) set.add(code);
+  return [...set];
+}
+
 /* ── Fusiones por entidad ─────────────────────────────── */
 
 /**
@@ -163,8 +177,14 @@ function mergeUser(local: User, remote: User): User {
   return { ...remote, password: local.password };
 }
 
-/** Ajustes del negocio: fusión campo a campo, para no perder claves que el servidor no manda. */
-function mergeCompany(local: CompanySettings, remote: CompanySettings): CompanySettings {
+/**
+ * Ajustes del negocio: fusión campo a campo, para no perder claves que el
+ * servidor no manda. Se exporta porque `lib/sync/company.ts` la reutiliza
+ * para adoptar la respuesta de `PATCH /company`: es la misma garantía de
+ * degradación (un backend que aún no conoce `productCode*` no debe borrar el
+ * valor que ya estaba en este equipo) que necesita aquí y en el bootstrap.
+ */
+export function mergeCompany(local: CompanySettings, remote: CompanySettings): CompanySettings {
   return {
     ...local,
     ...remote,
@@ -363,9 +383,17 @@ function applyDeletions(s: AppState, deletions: DeltaDeletion[]) {
         // llega y no hay nada que borrar. Se declara igual para no caer al
         // `default`, que lo reportaría como entidad desconocida.
         break;
-      case "product":
+      case "product": {
+        // El código se lee **antes** de quitar el producto: una vez borrado no
+        // hay de dónde recuperarlo, y `nextProductCode` necesita saber que ese
+        // código ya no está libre aunque el producto haya desaparecido.
+        const removed = s.products.find((x) => x.id === id);
+        if (removed) {
+          s.retiredProductCodes = unionRetiredCodes(s.retiredProductCodes, [removed.code]);
+        }
         s.products = s.products.filter((x) => x.id !== id);
         break;
+      }
       case "customer":
         s.customers = s.customers.filter((x) => x.id !== id);
         break;
@@ -441,6 +469,17 @@ export function applyBootstrap(b: BootstrapResponse) {
 
   mutate((s) => {
     s.company = mergeCompany(s.company, b.company);
+
+    // Códigos retirados: se funden, nunca se reemplazan (ver `unionRetiredCodes`).
+    // El bootstrap es autoritativo para casi todo, pero éste es un caso aparte:
+    // el servidor no manda "todos los retirados desde siempre", así que una
+    // lista ausente o recortada aquí no debe borrar lo que ya se sabía local.
+    if (b.retiredProductCodes?.length) {
+      s.retiredProductCodes = unionRetiredCodes(
+        s.retiredProductCodes,
+        b.retiredProductCodes.map((r) => r.code),
+      );
+    }
 
     // El usuario de la sesión y su rol se protegen de la poda: sin ellos en la caché
     // `useSession()` se queda sin permisos y la aplicación rebota al login.

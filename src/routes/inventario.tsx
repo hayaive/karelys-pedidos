@@ -21,7 +21,13 @@ import {
 import { PriceAlertAviso } from "@/components/price-alert";
 import { logAudit, mutate, useAppState } from "@/lib/store";
 import { addMovement, priceOf } from "@/lib/business";
-import { companyPriceRule, isGenericColdCake, priceAlertKey, priceAlerts } from "@/lib/pricing";
+import {
+  companyPriceRule,
+  defaultPriceType,
+  isGenericColdCake,
+  priceAlertKey,
+  priceAlerts,
+} from "@/lib/pricing";
 import { queueProductCreate, queueProductUpdate } from "@/lib/sync/mutations";
 import {
   categoryErrorText,
@@ -67,6 +73,11 @@ function Inventario() {
   const [edit, setEdit] = useState<Partial<Product> | null>(null);
   const [del, setDel] = useState<Product | null>(null);
   const [mov, setMov] = useState<Product | null>(null);
+
+  // La cifra grande es la del tipo de precio predeterminado (Ajustes); los
+  // demás tipos van debajo, para no mostrar un solo precio sin decir cuál es.
+  const tipoPorDefecto = defaultPriceType(s);
+  const otrosTipos = s.priceTypes.filter((pt) => pt.id !== tipoPorDefecto?.id);
 
   const list = s.products.filter(
     (p) =>
@@ -181,7 +192,9 @@ function Inventario() {
                       <th className="px-4 py-2.5">Categoría</th>
                       <th className="px-4 py-2.5 text-right">Stock</th>
                       <th className="px-4 py-2.5 text-right">Mínimo</th>
-                      <th className="px-4 py-2.5 text-right">Precio</th>
+                      <th className="px-4 py-2.5 text-right">
+                        {tipoPorDefecto ? `Precio ${tipoPorDefecto.name}` : "Precio"}
+                      </th>
                       <th className="px-4 py-2.5">Estado</th>
                       <th className="px-4 py-2.5" />
                     </tr>
@@ -206,9 +219,23 @@ function Inventario() {
                           {p.minStock}
                         </td>
                         <td className="num px-4 py-2.5 text-right">
-                          {p.bsOnly
-                            ? num(p.bsPrice ?? 0) + " Bs"
-                            : usd(priceOf(s, p, s.priceTypes[0]?.id))}
+                          {p.bsOnly ? (
+                            num(p.bsPrice ?? 0) + " Bs"
+                          ) : (
+                            <>
+                              <span className="block">
+                                {usd(priceOf(s, p, tipoPorDefecto?.id))}
+                              </span>
+                              {otrosTipos.map((pt) => (
+                                <span
+                                  key={pt.id}
+                                  className="block text-[11px] text-muted-foreground"
+                                >
+                                  {pt.name} {usd(priceOf(s, p, pt.id))}
+                                </span>
+                              ))}
+                            </>
+                          )}
                         </td>
                         <td className="px-4 py-2.5">
                           <Badge tone={p.active ? "green" : "neutral"}>
@@ -247,10 +274,24 @@ function Inventario() {
                           <p className="text-sm font-medium">{p.name}</p>
                           <p className="num text-xs text-muted-foreground">{p.code}</p>
                         </div>
-                        <span className="num text-sm">
-                          {p.bsOnly
-                            ? num(p.bsPrice ?? 0) + " Bs"
-                            : usd(priceOf(s, p, s.priceTypes[0]?.id))}
+                        <span className="num shrink-0 text-right text-sm">
+                          {p.bsOnly ? (
+                            num(p.bsPrice ?? 0) + " Bs"
+                          ) : (
+                            <>
+                              <span className="block">
+                                {usd(priceOf(s, p, tipoPorDefecto?.id))}
+                              </span>
+                              {otrosTipos.map((pt) => (
+                                <span
+                                  key={pt.id}
+                                  className="block text-[11px] text-muted-foreground"
+                                >
+                                  {pt.name} {usd(priceOf(s, p, pt.id))}
+                                </span>
+                              ))}
+                            </>
+                          )}
                         </span>
                       </div>
                       <div className="mt-2 flex items-center gap-2">

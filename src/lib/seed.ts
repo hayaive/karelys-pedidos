@@ -1,4 +1,9 @@
-import { ensureColdCakeFamily } from "./catalog";
+import {
+  DEFAULT_PRODUCT_CODE_DIGITS,
+  DEFAULT_PRODUCT_CODE_PREFIX,
+  DEFAULT_PRODUCT_CODE_START,
+  ensureColdCakeFamily,
+} from "./catalog";
 import { SEED_PRODUCTS } from "./data/products.seed";
 import { slug, uid } from "./ids";
 import { SCHEMA_VERSION } from "./migrations";
@@ -160,8 +165,15 @@ export function buildSeed(): AppState {
       coldCakeMax: COLD_CAKE_TARGET_USD,
       bsRounding: DEFAULT_BS_ROUNDING,
       rateMaxAgeHours: DEFAULT_RATE_MAX_AGE_HOURS,
+      // Secuencia automática de códigos: la misma serie "Pxxx" que ya tenía el
+      // catálogo semilla (ver DEFAULT_PRODUCT_CODE_* en lib/catalog), así que
+      // activarla no cambia ningún código existente.
+      productCodePrefix: DEFAULT_PRODUCT_CODE_PREFIX,
+      productCodeDigits: DEFAULT_PRODUCT_CODE_DIGITS,
+      productCodeStart: DEFAULT_PRODUCT_CODE_START,
     },
     sessionUserId: null,
+    retiredProductCodes: [],
   };
 
   ensureColdCakeFamily(state);

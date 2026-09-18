@@ -76,6 +76,12 @@ interface RequestOptions {
   /** Interno: evita que el reintento tras renovar el token se reintente otra vez. */
   retriedAfterRefresh?: boolean;
   signal?: AbortSignal;
+  /**
+   * Cabeceras adicionales del llamador (p. ej. `If-Match` en `PATCH /company`,
+   * ver lib/sync/company.ts). Se añaden **después** de las que ya arma esta
+   * función, así que no pueden pisar `Authorization` ni `X-Device-Id`.
+   */
+  headers?: Record<string, string>;
 }
 
 /** Margen con el que se considera caducado el access token antes de que lo esté. */
@@ -96,6 +102,7 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
     const token = getSession().accessToken;
     if (token) headers["Authorization"] = `Bearer ${token}`;
   }
+  if (options.headers) Object.assign(headers, options.headers);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);

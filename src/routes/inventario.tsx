@@ -21,7 +21,14 @@ import {
 import { PriceAlertAviso } from "@/components/price-alert";
 import { logAudit, mutate, useAppState } from "@/lib/store";
 import { addMovement, priceOf } from "@/lib/business";
-import { companyPriceRule, isGenericColdCake, priceAlertKey, priceAlerts } from "@/lib/pricing";
+import { nextProductCode } from "@/lib/catalog";
+import {
+  companyPriceRule,
+  defaultPriceType,
+  isGenericColdCake,
+  priceAlertKey,
+  priceAlerts,
+} from "@/lib/pricing";
 import { queueProductCreate, queueProductUpdate } from "@/lib/sync/mutations";
 import {
   categoryErrorText,
@@ -30,6 +37,7 @@ import {
   renameCategory,
   useCategoryAccess,
 } from "@/lib/sync/categories";
+import { deleteProduct, deletionErrorText } from "@/lib/sync/deletions";
 import { dt, num, usd } from "@/lib/format";
 import { uid } from "@/lib/seed";
 import type { Category, Product } from "@/lib/types";
@@ -66,7 +74,13 @@ function Inventario() {
   const [stockFilter, setStockFilter] = useState("all");
   const [edit, setEdit] = useState<Partial<Product> | null>(null);
   const [del, setDel] = useState<Product | null>(null);
+  const [borrandoProducto, setBorrandoProducto] = useState(false);
   const [mov, setMov] = useState<Product | null>(null);
+
+  // La cifra grande es la del tipo de precio predeterminado (Ajustes); los
+  // demás tipos van debajo, para no mostrar un solo precio sin decir cuál es.
+  const tipoPorDefecto = defaultPriceType(s);
+  const otrosTipos = s.priceTypes.filter((pt) => pt.id !== tipoPorDefecto?.id);
 
   const list = s.products.filter(
     (p) =>
@@ -91,7 +105,9 @@ function Inventario() {
               variant="amber"
               onClick={() =>
                 setEdit({
-                  code: "",
+                  // Sugerido según la secuencia de Ajustes · Impresión y
+                  // numeración; el campo sigue siendo editable en el formulario.
+                  code: nextProductCode(s),
                   name: "",
                   categoryId: s.categories[0]?.id,
                   stock: 0,
@@ -181,7 +197,9 @@ function Inventario() {
                       <th className="px-4 py-2.5">Categoría</th>
                       <th className="px-4 py-2.5 text-right">Stock</th>
                       <th className="px-4 py-2.5 text-right">Mínimo</th>
-                      <th className="px-4 py-2.5 text-right">Precio</th>
+                      <th className="px-4 py-2.5 text-right">
+                        {tipoPorDefecto ? `Precio ${tipoPorDefecto.name}` : "Precio"}
+                      </th>
                       <th className="px-4 py-2.5">Estado</th>
                       <th className="px-4 py-2.5" />
                     </tr>
@@ -206,9 +224,23 @@ function Inventario() {
                           {p.minStock}
                         </td>
                         <td className="num px-4 py-2.5 text-right">
-                          {p.bsOnly
-                            ? num(p.bsPrice ?? 0) + " Bs"
-                            : usd(priceOf(s, p, s.priceTypes[0]?.id))}
+                          {p.bsOnly ? (
+                            num(p.bsPrice ?? 0) + " Bs"
+                          ) : (
+                            <>
+                              <span className="block">
+                                {usd(priceOf(s, p, tipoPorDefecto?.id))}
+                              </span>
+                              {otrosTipos.map((pt) => (
+                                <span
+                                  key={pt.id}
+                                  className="block text-[11px] text-muted-foreground"
+                                >
+                                  {pt.name} {usd(priceOf(s, p, pt.id))}
+                                </span>
+                              ))}
+                            </>
+                          )}
                         </td>
                         <td className="px-4 py-2.5">
                           <Badge tone={p.active ? "green" : "neutral"}>
@@ -247,10 +279,24 @@ function Inventario() {
                           <p className="text-sm font-medium">{p.name}</p>
                           <p className="num text-xs text-muted-foreground">{p.code}</p>
                         </div>
-                        <span className="num text-sm">
-                          {p.bsOnly
-                            ? num(p.bsPrice ?? 0) + " Bs"
-                            : usd(priceOf(s, p, s.priceTypes[0]?.id))}
+                        <span className="num shrink-0 text-right text-sm">
+                          {p.bsOnly ? (
+                            num(p.bsPrice ?? 0) + " Bs"
+                          ) : (
+                            <>
+                              <span className="block">
+                                {usd(priceOf(s, p, tipoPorDefecto?.id))}
+                              </span>
+                              {otrosTipos.map((pt) => (
+                                <span
+                                  key={pt.id}
+                                  className="block text-[11px] text-muted-foreground"
+                                >
+                                  {pt.name} {usd(priceOf(s, p, pt.id))}
+                                </span>
+                              ))}
+                            </>
+                          )}
                         </span>
                       </div>
                       <div className="mt-2 flex items-center gap-2">
@@ -303,12 +349,23 @@ function Inventario() {
         message={`¿Eliminar ${del?.name}? Considera desactivarlo si tiene historial de ventas.`}
         onCancel={() => setDel(null)}
         onConfirm={() => {
-          mutate((st) => {
-            st.products = st.products.filter((x) => x.id !== del!.id);
-            logAudit("producto_eliminado", "product", del!.id);
-          });
-          toast.success("Producto eliminado");
-          setDel(null);
+          // Igual que categorías: primero el servidor, y sólo si confirma se
+          // toca el estado local (ver `lib/sync/deletions`). El código se
+          // retira ahí mismo, no hace falta duplicarlo aquí.
+          if (borrandoProducto) return;
+          const target = del!;
+          setBorrandoProducto(true);
+          deleteProduct(target)
+            .then(() => {
+              toast.success("Producto eliminado");
+              setDel(null);
+            })
+            .catch((err) => {
+              toast.error("No se pudo eliminar el producto", {
+                description: deletionErrorText(err),
+              });
+            })
+            .finally(() => setBorrandoProducto(false));
         }}
       />
     </>
@@ -318,6 +375,13 @@ function Inventario() {
 function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () => void }) {
   const s = useAppState();
   const [f, setF] = useState<Partial<Product>>({ ...draft });
+  // El código con el que se abrió el formulario si es un producto nuevo (lo
+  // puso `nextProductCode` al pulsar "Nuevo producto"). Sirve para distinguir,
+  // al guardar, "el admin escribió este código a mano" de "sigue siendo el
+  // sugerido y mientras tanto se ocupó": sólo el segundo caso se recalcula en
+  // vez de rechazarse. Se congela en el primer render: no debe recalcularse
+  // sólo porque el catálogo cambió mientras el formulario seguía abierto.
+  const [suggestedCode] = useState<string | null>(draft.id ? null : (draft.code ?? null));
   const price = (ptId: string) => f.prices?.find((x) => x.priceTypeId === ptId)?.amount ?? 0;
   const setPrice = (ptId: string, v: number) => {
     const rest = (f.prices ?? []).filter((x) => x.priceTypeId !== ptId);
@@ -335,8 +399,17 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
 
   return (
     <div className="grid gap-3 sm:grid-cols-2">
-      <Field label="Código">
-        <Input value={f.code ?? ""} onChange={(e) => setF({ ...f, code: e.target.value })} />
+      <Field
+        label="Código"
+        hint={!f.id ? "Automático según Ajustes · puedes cambiarlo" : undefined}
+      >
+        <Input
+          value={f.code ?? ""}
+          // El servidor guarda los códigos en mayúsculas (misma serie que
+          // `nextProductCode`); pasarlo aquí evita que "p061" y "P061" se vean
+          // como códigos distintos hasta que el guardado los normalice.
+          onChange={(e) => setF({ ...f, code: e.target.value.toUpperCase() })}
+        />
       </Field>
       <Field label="Nombre">
         <Input value={f.name ?? ""} onChange={(e) => setF({ ...f, name: e.target.value })} />
@@ -468,6 +541,33 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
             if ((f.stock ?? 0) < 0 || (f.minStock ?? 0) < 0)
               return toast.error("El stock y el stock mínimo no pueden ser negativos");
 
+            // Validación del código: el servidor rechazaría igual un código ya
+            // usado por otro producto o uno retirado, y ese rechazo es
+            // permanente (ver el comentario de arriba), así que se ataja aquí.
+            let code = f.code!.trim().toUpperCase();
+            const retirados = new Set(s.retiredProductCodes ?? []);
+            const usadoPorOtro = (c: string) =>
+              s.products.some((p) => p.code === c && p.id !== f.id);
+
+            if (!f.id && code === suggestedCode && (usadoPorOtro(code) || retirados.has(code))) {
+              // El código sugerido al abrir el formulario se ocupó mientras
+              // tanto (llegó un producto por sync): se recalcula en vez de
+              // rechazar, la misma situación que resuelve el servidor con
+              // `renumbered` cuando esto se escapa a una mutación en cola.
+              code = nextProductCode(s);
+              toast.info(`El código sugerido ya se había ocupado: se usa ${code}`);
+            }
+
+            if (usadoPorOtro(code)) return toast.error(`El código ${code} ya lo usa otro producto`);
+            // Sólo un código **nuevo** puede chocar con un retirado. Al editar sin
+            // tocar el código no se mira: un producto borrado aquí vuelve con el
+            // siguiente bootstrap (el borrado no sube al servidor) y su código ya
+            // quedó en `retiredProductCodes`, así que la comprobación lo dejaría
+            // sin poder guardarse nunca más.
+            const codigoOriginal = f.id ? s.products.find((p) => p.id === f.id)?.code : undefined;
+            if (code !== codigoOriginal && retirados.has(code))
+              return toast.error(`El código ${code} está retirado y no se puede reutilizar`);
+
             const desiredStock = f.stock ?? 0;
             let created: Product | undefined;
             let edited: Product | undefined;
@@ -478,14 +578,17 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
                 const ex = st.products.find((x) => x.id === f.id);
                 if (ex) {
                   stockBefore = ex.stock;
-                  Object.assign(ex, f);
+                  // `code` no se toca al editar un producto existente: sólo
+                  // pudo cambiar por una corrección a mano, y esa corrección
+                  // ya pasó por la misma validación de arriba.
+                  Object.assign(ex, f, { code });
                   edited = ex;
                 }
                 logAudit("producto_editado", "product", f.id);
               } else {
                 const p: Product = {
                   id: uid(),
-                  code: f.code!,
+                  code,
                   name: f.name!,
                   description: f.description,
                   categoryId: f.categoryId!,

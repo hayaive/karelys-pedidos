@@ -359,10 +359,14 @@ function handleResults(batch: QueuedMutation[], results: MutationResult[]) {
       case "duplicate":
         if (sent && r.serverEntity) applyServerEntity(sent.entity, r.serverEntity);
         if (r.renumbered) {
-          toast.info(
-            `El servidor renumeró ${r.renumbered.from} como ${r.renumbered.to}`,
-            { description: "Otro equipo ya había usado ese número mientras no había conexión." },
-          );
+          // Generalizado: antes sólo pasaba con números de venta/pedido
+          // (`V-000xx`, `P-000xx`) chocados entre dos cajas offline. Desde la
+          // secuencia automática de códigos de producto, el servidor recodifica
+          // por el mismo motivo, o porque el código que se ofreció localmente
+          // resultó estar retirado.
+          toast.info(`El servidor reasignó ${r.renumbered.from} como ${r.renumbered.to}`, {
+            description: "Ese código ya estaba en uso o retirado mientras no había conexión.",
+          });
         }
         settled.push(r.mutationId);
         break;

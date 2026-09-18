@@ -142,6 +142,20 @@ function replaceAuthoritative<T extends WithId>(
 const byCreatedDesc = (a: { createdAt: string }, b: { createdAt: string }) =>
   b.createdAt.localeCompare(a.createdAt);
 
+/**
+ * Une códigos de producto retirados sin achicar nunca la lista local: un
+ * bootstrap más viejo, o uno que traiga una ventana distinta, no debe hacer
+ * que `nextProductCode` (lib/catalog) vuelva a ofrecer un código que el
+ * servidor ya rechazaría. Ver el comentario de `retiredProductCodes` en
+ * lib/types.
+ */
+function unionRetiredCodes(local: string[] | undefined, incoming: string[]): string[] {
+  if (!incoming.length) return local ?? [];
+  const set = new Set(local ?? []);
+  for (const code of incoming) set.add(code);
+  return [...set];
+}
+
 /* ── Fusiones por entidad ─────────────────────────────── */
 
 /**
@@ -163,8 +177,14 @@ function mergeUser(local: User, remote: User): User {
   return { ...remote, password: local.password };
 }
 
-/** Ajustes del negocio: fusión campo a campo, para no perder claves que el servidor no manda. */
-function mergeCompany(local: CompanySettings, remote: CompanySettings): CompanySettings {
+/**
+ * Ajustes del negocio: fusión campo a campo, para no perder claves que el
+ * servidor no manda. Se exporta porque `lib/sync/company.ts` la reutiliza
+ * para adoptar la respuesta de `PATCH /company`: es la misma garantía de
+ * degradación (un backend que aún no conoce `productCode*` no debe borrar el
+ * valor que ya estaba en este equipo) que necesita aquí y en el bootstrap.
+ */
+export function mergeCompany(local: CompanySettings, remote: CompanySettings): CompanySettings {
   return {
     ...local,
     ...remote,
@@ -204,7 +224,9 @@ function unionDeposits(local: OrderDeposit[] = [], remote: OrderDeposit[] = []):
   const byId = new Map<ID, OrderDeposit>();
   for (const d of local) byId.set(d.id, d);
   for (const d of remote) byId.set(d.id, { ...byId.get(d.id), ...d });
-  return [...byId.values()].sort((a, b) => (a.at ?? a.createdAt).localeCompare(b.at ?? b.createdAt));
+  return [...byId.values()].sort((a, b) =>
+    (a.at ?? a.createdAt).localeCompare(b.at ?? b.createdAt),
+  );
 }
 
 /**
@@ -252,6 +274,37 @@ function mergeSale(local: Sale, remote: Sale, pending: boolean): Sale {
     voidedAt: local.voidedAt ?? remote.voidedAt,
     voidReason: local.voidReason ?? remote.voidReason,
     voidedByUserId: local.voidedByUserId ?? remote.voidedByUserId,
+  };
+}
+
+/**
+ * Cierre de caja. `closureOut` (backend) manda `byMethod[].{expected,received}`
+ * en USD, `expectedUsd`/`receivedUsd`/`differenceUsd`/`rev` y poco más: no
+ * conoce `rate` (la tasa BCV con la que este equipo llevó los Bs a dólares) ni,
+ * por método, `currency`/`expectedAmount`/`receivedAmount` (el desglose en la
+ * moneda propia del método que muestra esta pantalla) — son detalle de
+ * presentación que sólo vive en el cliente. Un `remoteWins` liso los borraría
+ * en cuanto el cierre local confirma o llega por delta, y la pantalla caería al
+ * mismo *fallback* que ya contempla `DailyClosure` para cierres antiguos
+ * (mostrar lo esperado en vez de lo contado). Aquí se conservan cuando el
+ * servidor no los manda, y por id de método: si esto es un cierre ajeno que
+ * ganó la carrera (`applyClosureEntity`), no hay local con quien fundir y el
+ * resultado es tal cual el servidor, que es lo correcto.
+ */
+function mergeClosure(local: DailyClosure, remote: DailyClosure): DailyClosure {
+  const localByMethod = new Map(local.byMethod.map((m) => [m.methodId, m]));
+  return {
+    ...remote,
+    rate: remote.rate ?? local.rate,
+    byMethod: remote.byMethod.map((m) => {
+      const mine = localByMethod.get(m.methodId);
+      return {
+        ...m,
+        currency: m.currency ?? mine?.currency,
+        expectedAmount: m.expectedAmount ?? mine?.expectedAmount,
+        receivedAmount: m.receivedAmount ?? mine?.receivedAmount,
+      };
+    }),
   };
 }
 
@@ -309,7 +362,7 @@ export function applyDelta(changes: DeltaChanges, deletions: DeltaDeletion[] = [
       remoteWins,
       byCreatedDesc,
     );
-    s.closures = upsert<DailyClosure>(s.closures, changes.closures, remoteWins, (a, b) =>
+    s.closures = upsert<DailyClosure>(s.closures, changes.closures, mergeClosure, (a, b) =>
       b.date.localeCompare(a.date),
     );
     s.audit = upsert<AuditLog>(s.audit, changes.audit, remoteWins, byCreatedDesc).slice(0, 500);
@@ -363,9 +416,17 @@ function applyDeletions(s: AppState, deletions: DeltaDeletion[]) {
         // llega y no hay nada que borrar. Se declara igual para no caer al
         // `default`, que lo reportaría como entidad desconocida.
         break;
-      case "product":
+      case "product": {
+        // El código se lee **antes** de quitar el producto: una vez borrado no
+        // hay de dónde recuperarlo, y `nextProductCode` necesita saber que ese
+        // código ya no está libre aunque el producto haya desaparecido.
+        const removed = s.products.find((x) => x.id === id);
+        if (removed) {
+          s.retiredProductCodes = unionRetiredCodes(s.retiredProductCodes, [removed.code]);
+        }
         s.products = s.products.filter((x) => x.id !== id);
         break;
+      }
       case "customer":
         s.customers = s.customers.filter((x) => x.id !== id);
         break;
@@ -442,6 +503,17 @@ export function applyBootstrap(b: BootstrapResponse) {
   mutate((s) => {
     s.company = mergeCompany(s.company, b.company);
 
+    // Códigos retirados: se funden, nunca se reemplazan (ver `unionRetiredCodes`).
+    // El bootstrap es autoritativo para casi todo, pero éste es un caso aparte:
+    // el servidor no manda "todos los retirados desde siempre", así que una
+    // lista ausente o recortada aquí no debe borrar lo que ya se sabía local.
+    if (b.retiredProductCodes?.length) {
+      s.retiredProductCodes = unionRetiredCodes(
+        s.retiredProductCodes,
+        b.retiredProductCodes.map((r) => r.code),
+      );
+    }
+
     // El usuario de la sesión y su rol se protegen de la poda: sin ellos en la caché
     // `useSession()` se queda sin permisos y la aplicación rebota al login.
     const sessionUserId = s.sessionUserId;
@@ -489,7 +561,7 @@ export function applyBootstrap(b: BootstrapResponse) {
     );
     s.movements = upsert<InventoryMovement>(s.movements, b.movements, remoteWins, byCreatedDesc);
     s.rates = upsert<ExchangeRate>(s.rates, b.rates, remoteWins, byCreatedDesc);
-    s.closures = upsert<DailyClosure>(s.closures, b.closures, remoteWins, (a, x) =>
+    s.closures = upsert<DailyClosure>(s.closures, b.closures, mergeClosure, (a, x) =>
       x.date.localeCompare(a.date),
     );
     s.audit = upsert<AuditLog>(s.audit, b.audit, remoteWins, byCreatedDesc).slice(0, 500);
@@ -529,7 +601,7 @@ export function applyServerEntity(entity: string, serverEntity: unknown) {
       applyDelta({ products: [serverEntity as Product] });
       break;
     case "closure":
-      applyDelta({ closures: [serverEntity as DailyClosure] });
+      applyClosureEntity(serverEntity as DailyClosure);
       break;
     // Las tasas no son raíz del delta (llegan en `/bootstrap`), así que se funden aparte.
     case "rate":
@@ -540,6 +612,24 @@ export function applyServerEntity(entity: string, serverEntity: unknown) {
       // entidad. Nada que adoptar.
       break;
   }
+}
+
+/**
+ * Cierre confirmado (o rechazado) por `closure.create`. A diferencia del resto de
+ * `applyServerEntity`, no basta con fundir por `id`: "gana el primero" (§5)
+ * significa que el equipo que pierde la carrera mandó su propio id local para la
+ * misma fecha, y el servidor responde con el cierre **ajeno**, de otro id. Un
+ * `upsert` por id dejaría los dos —el local huérfano y el del servidor—
+ * conviviendo para siempre en la lista, cuando sólo puede existir un cierre por
+ * fecha. Por eso primero se retira cualquier cierre local de esa misma fecha con
+ * otro id, y recién entonces se adopta el del servidor.
+ */
+function applyClosureEntity(closure: DailyClosure) {
+  if (!closure?.id || !closure.date) return;
+  mutate((s) => {
+    s.closures = s.closures.filter((c) => c.id === closure.id || c.date !== closure.date);
+  });
+  applyDelta({ closures: [closure] });
 }
 
 function applyRate(rate: ExchangeRate) {

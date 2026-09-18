@@ -141,8 +141,8 @@ function RootComponent() {
     registerServiceWorker();
   }, []);
 
-  // Al entrar a la app con sesión iniciada, refresca la tasa BCV/paralelo/EUR
-  // si ya está vencida (ver hooks/use-auto-refresh-rates). No toca app-shell.tsx.
+  // Refresca la tasa BCV/paralelo/EUR al entrar con sesión, en cada cambio de
+  // pantalla y al volver a la app (ver hooks/use-auto-refresh-rates).
   useAutoRefreshRates();
 
   return (

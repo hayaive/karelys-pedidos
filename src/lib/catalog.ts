@@ -48,8 +48,86 @@ function productByName(s: AppState, name: string) {
   return s.products.find((p) => normalizeName(p.name) === target);
 }
 
+/* ── Secuencia automática de códigos de producto ──────────
+   Configuración en `company` como **piso configurable, no contador**: el
+   negocio dice desde dónde seguir ("Continuar desde") y este cálculo busca
+   el primer número libre a partir de ahí cada vez, en vez de guardar un
+   cursor que dos altas sin red podrían desincronizar. Regla idéntica a la
+   del backend (que la aplica al validar `product.create`), para que lo que
+   este cliente sugiere nunca sea algo que el servidor vaya a rechazar. */
+
+/** Default de fábrica: la misma serie "Pxxx" que ya tenía el catálogo semilla. */
+export const DEFAULT_PRODUCT_CODE_PREFIX = "P";
+export const DEFAULT_PRODUCT_CODE_DIGITS = 3;
+export const DEFAULT_PRODUCT_CODE_START = 1;
+
+/** Escapa un texto para usarlo literal dentro de un `RegExp`. */
+function escapeRegex(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /**
- * Siguiente código libre de la serie del catálogo (P001, P002, …).
+ * Números ya ocupados dentro de la serie de `prefix`, leyendo el catálogo
+ * **numéricamente** y no por comparación de texto: "P0061" ocupa el 61 igual
+ * que "P061", así que un código tecleado a mano con ceros de más no abre la
+ * puerta a un duplicado semántico.
+ *
+ * Ocupan un número: los productos vivos, los códigos retirados
+ * (`s.retiredProductCodes`, ver `applyBootstrap`/`applyDeletions` en
+ * lib/sync/apply) y los 13 sabores legado (P001–P013), que nunca dejan de
+ * existir para un ticket viejo aunque el producto ya no esté.
+ */
+function occupiedCodeNumbers(s: AppState, prefix: string): Set<number> {
+  const re = new RegExp("^" + escapeRegex(prefix) + "(\\d+)$");
+  const occupied = new Set<number>();
+  const consider = (code: string) => {
+    const m = code.match(re);
+    if (m) occupied.add(parseInt(m[1], 10));
+  };
+  for (const p of s.products) consider(p.code);
+  for (const code of s.retiredProductCodes ?? []) consider(code);
+  for (const f of COLD_CAKE_LEGACY_FLAVORS) consider(f.code);
+  return occupied;
+}
+
+/**
+ * Código sugerido para un producto nuevo, según la secuencia configurada en
+ * Ajustes → Impresión y numeración. Parte de `productCodeStart` y sube hasta
+ * el primer número libre; si el hueco libre excede `productCodeDigits` no se
+ * trunca (puede devolver "P1000" con 3 dígitos configurados).
+ *
+ * Es sólo una **sugerencia**: el campo del formulario sigue siendo editable y
+ * el guardado vuelve a validar contra el catálogo del momento (pudo llegar un
+ * producto por sync mientras el formulario estaba abierto).
+ */
+export function nextProductCode(s: AppState): string {
+  const prefix = s.company.productCodePrefix ?? DEFAULT_PRODUCT_CODE_PREFIX;
+  const digits = s.company.productCodeDigits ?? DEFAULT_PRODUCT_CODE_DIGITS;
+  const start = s.company.productCodeStart ?? DEFAULT_PRODUCT_CODE_START;
+
+  const occupied = occupiedCodeNumbers(s, prefix);
+  let n = start;
+  while (occupied.has(n)) n++;
+  return prefix + String(n).padStart(digits, "0");
+}
+
+/**
+ * Separa un código en prefijo alfabético y longitud de la parte numérica
+ * ("P060" → { prefix: "P", digits: 3 }). Sólo para el respaldo de
+ * `nextFreeCode`; un código que no encaja en esa forma (un `id` cualquiera)
+ * no tiene una serie numérica de la que buscar el siguiente libre.
+ */
+function splitCode(code: string): { prefix: string; digits: number } | null {
+  const m = code.match(/^([A-Za-z-]*)(\d+)$/);
+  if (!m) return null;
+  return { prefix: m[1], digits: m[2].length };
+}
+
+/**
+ * Siguiente código libre para uno de los productos fijos del catálogo
+ * (Brownie, el genérico de tortas frías…) cuando su código preferido ya está
+ * tomado. Usa la misma regla numérica que `nextProductCode` —no la búsqueda
+ * de antes, texto contra texto— para que "P0060" cuente igual que "P060".
  *
  * Los códigos de los sabores retirados cuentan como ocupados aunque ya no
  * exista el producto: un comprobante viejo sigue diciendo "P001 · tres-leches"
@@ -60,13 +138,17 @@ function nextFreeCode(s: AppState, preferred: string) {
   const used = new Set<string>([
     ...s.products.map((p) => p.code),
     ...COLD_CAKE_LEGACY_FLAVORS.map((f) => f.code),
+    ...(s.retiredProductCodes ?? []),
   ]);
   if (!used.has(preferred)) return preferred;
-  for (let n = 1; n < 1000; n++) {
-    const candidate = "P" + String(n).padStart(3, "0");
-    if (!used.has(candidate)) return candidate;
-  }
-  return "P-" + uid();
+
+  const parsed = splitCode(preferred);
+  if (!parsed) return "P-" + uid();
+
+  const occupied = occupiedCodeNumbers(s, parsed.prefix);
+  let n = 1;
+  while (occupied.has(n)) n++;
+  return parsed.prefix + String(n).padStart(parsed.digits, "0");
 }
 
 /**

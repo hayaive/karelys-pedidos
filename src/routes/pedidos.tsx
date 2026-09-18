@@ -1,12 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { IcoImprimir, IcoMas, IcoPapelera } from "@/chasis/iconos";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AppShell, PageHead } from "@/components/app-shell";
 import { useSession } from "@/lib/auth";
 import { POS } from "@/components/pos";
 import { TicketPreview } from "@/components/ticket";
 import {
+  Aviso,
   Badge,
   Btn,
   Card,
@@ -15,19 +16,24 @@ import {
   Field,
   Input,
   Modal,
+  PriceTypeControl,
   Select,
   Textarea,
 } from "@/components/ui-kit";
 import { useAppState } from "@/lib/store";
 import {
   addOrderDeposit,
+  commonPriceTypeId,
   deleteOrder,
   itemsTotals,
   lineBs,
+  mergeLines,
   orderBalance,
+  repriceLine,
   setOrderStatus,
   updateOrder,
 } from "@/lib/business";
+import { clearDraft, draftHasContent, lineKeyOf, loadDraft, type PosDraft } from "@/lib/pos-draft";
 import { useMoney } from "@/hooks/use-money";
 import { dt, parseAmount, usd } from "@/lib/format";
 import type { Order, OrderStatus } from "@/lib/types";
@@ -69,6 +75,16 @@ function Pedidos() {
   const [depositingFor, setDepositingFor] = useState<Order | null>(null);
   const [printingFor, setPrintingFor] = useState<Order | null>(null);
   const [filter, setFilter] = useState<string>("activos");
+  // Borrador de "Nuevo pedido" sin terminar (ver lib/pos-draft): se relee cada
+  // vez que se vuelve de "creating" a la lista, porque mientras el POS
+  // estuvo montado fue él quien lo mantuvo actualizado en localStorage.
+  const [orderDraft, setOrderDraft] = useState<PosDraft | null>(null);
+  const [discardDraft, setDiscardDraft] = useState(false);
+
+  useEffect(() => {
+    if (creating) return;
+    setOrderDraft(loadDraft("order", s.sessionUserId ?? null));
+  }, [creating, s.sessionUserId]);
 
   useShortcuts({
     process_order: () => {
@@ -142,6 +158,25 @@ function Pedidos() {
         }
       />
 
+      {orderDraft && draftHasContent(orderDraft) && (
+        <div className="mb-4">
+          <Aviso tone="amber" title="Tienes un pedido sin terminar">
+            <p className="num">
+              {orderDraft.items.length} producto{orderDraft.items.length === 1 ? "" : "s"} ·{" "}
+              {orderDraft.customerName || "Consumidor final"}
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Btn size="sm" variant="amber" onClick={() => setCreating(true)}>
+                Continuar
+              </Btn>
+              <Btn size="sm" variant="ghost" onClick={() => setDiscardDraft(true)}>
+                Descartar
+              </Btn>
+            </div>
+          </Aviso>
+        </div>
+      )}
+
       {orders.length === 0 ? (
         <Card>
           <Empty
@@ -177,7 +212,11 @@ function Pedidos() {
                   </div>
                   <Badge
                     tone={
-                      o.status === "procesado" ? "green" : o.status === "cancelado" ? "red" : "amber"
+                      o.status === "procesado"
+                        ? "green"
+                        : o.status === "cancelado"
+                          ? "red"
+                          : "amber"
                     }
                   >
                     {STATUSES.find((x) => x.key === o.status)?.label}
@@ -192,7 +231,11 @@ function Pedidos() {
                   {o.items.length > 4 && <li>+{o.items.length - 4} más</li>}
                 </ul>
                 {o.note && (
-                  <p className="mt-2 rounded bg-sol-vela px-2 py-1 text-xs text-sol-70">{o.note}</p>
+                  // `whitespace-pre-line`: la nota se escribe con saltos de línea y
+                  // tiene que leerse igual que se escribió.
+                  <p className="mt-2 whitespace-pre-line break-words rounded bg-sol-vela px-2 py-1.5 text-sm font-bold text-sol-70">
+                    {o.note}
+                  </p>
                 )}
                 <p className="mt-3">
                   <span className="num block text-lg font-semibold">
@@ -304,6 +347,21 @@ function Pedidos() {
           if (!res.ok) toast.error(res.error!);
           else toast.success("Pedido eliminado");
           setDel(null);
+        }}
+      />
+
+      <ConfirmDialog
+        open={discardDraft}
+        danger
+        title="Descartar pedido sin terminar"
+        message="¿Descartar el pedido sin terminar? Se perderán los productos, el cliente y la nota."
+        verbo="Descartar"
+        onCancel={() => setDiscardDraft(false)}
+        onConfirm={() => {
+          clearDraft("order", s.sessionUserId ?? null);
+          setOrderDraft(null);
+          setDiscardDraft(false);
+          toast.success("Pedido sin terminar descartado");
         }}
       />
 
@@ -424,54 +482,136 @@ function AddDeposit({ orderId, onClose }: { orderId: string; onClose: () => void
 }
 
 function EditOrder({ order, onClose }: { order: Order; onClose: () => void }) {
+  const s = useAppState();
   const money = useMoney();
   const [items, setItems] = useState(order.items);
   const [note, setNote] = useState(order.note ?? "");
   const [status, setStatus] = useState<OrderStatus>(order.status);
+  const variosTipos = s.priceTypes.length > 1;
+  const pricedItems = items.filter((i) => !i.bsOnly);
+  const cartPriceType = commonPriceTypeId(items);
+  // Texto a medio tipear en el campo de cantidad de cada línea, igual que en
+  // el mostrador (ver LineRows en components/pos.tsx): permite borrar el
+  // dígito y tipear el número nuevo sin que salte de vuelta a 1.
+  const [qtyDrafts, setQtyDrafts] = useState<Record<string, string>>({});
+
+  function forgetQtyDraft(key: string) {
+    setQtyDrafts((prev) => {
+      if (!(key in prev)) return prev;
+      const { [key]: _omit, ...rest } = prev;
+      return rest;
+    });
+  }
+
+  function setQty(idx: number, qty: number) {
+    setItems((prev) =>
+      prev.map((x, j) =>
+        j === idx
+          ? { ...x, qty, subtotalUsd: (x.unitPriceUsd + (x.customizationPrice ?? 0)) * qty }
+          : x,
+      ),
+    );
+  }
+
+  /** Repricea todo el pedido a un tipo, igual que en el mostrador (POS). */
+  function applyPriceTypeToAll(id: string) {
+    setItems((prev) => mergeLines(prev.map((i) => repriceLine(s, i, id))));
+  }
+
+  /** Cambia el tipo de precio de una sola línea. */
+  function setLinePriceType(idx: number, id: string) {
+    setItems((prev) => mergeLines(prev.map((i, k) => (k === idx ? repriceLine(s, i, id) : i))));
+  }
+
   return (
     <div className="space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs text-muted-foreground">Artículos ({items.length})</p>
+        {/* Mismo control general que en el mostrador: repricea todo el pedido
+            de un golpe y refleja "Mixto" si las líneas quedaron con tipos
+            distintos. Sin líneas con tipo (solo tortas frías) no hay nada que
+            comparar, así que no se muestra. */}
+        {variosTipos && pricedItems.length > 0 && (
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] text-muted-foreground">Todo a</span>
+            <PriceTypeControl
+              priceTypes={s.priceTypes}
+              value={cartPriceType}
+              onChange={applyPriceTypeToAll}
+              ariaLabel="Tipo de precio de todo el pedido"
+              mixedLabel="Mixto"
+            />
+          </div>
+        )}
+      </div>
       <div className="space-y-2">
         {items.map((i, k) => (
-          <div
-            key={k}
-            className="flex items-center gap-2 rounded-md border border-border px-3 py-2.5"
-          >
-            <span className="min-w-0 flex-1 truncate text-sm">{i.name}</span>
-            <input
-              type="number"
-              min={1}
-              value={i.qty}
-              onChange={(e) => {
-                const qty = Math.max(1, parseInt(e.target.value) || 1);
-                setItems(
-                  items.map((x, j) =>
-                    j === k
-                      ? {
-                          ...x,
-                          qty,
-                          subtotalUsd: (x.unitPriceUsd + (x.customizationPrice ?? 0)) * qty,
-                        }
-                      : x,
-                  ),
-                );
-              }}
-              className="num h-10 w-14 shrink-0 rounded border border-border bg-card px-2 text-center text-sm"
-            />
-            <span className="w-20 shrink-0 text-right">
-              <span className="num block text-sm">{money.fmtBsAmount(lineBs(i, money))}</span>
-              {!i.bsOnly && (
-                <span className="num block text-[10px] text-muted-foreground">
-                  {usd(i.subtotalUsd)}
-                </span>
-              )}
-            </span>
-            <button
-              onClick={() => setItems(items.filter((_, j) => j !== k))}
-              className="-mr-1 grid size-10 shrink-0 place-items-center rounded-sm text-muted-foreground transition-colors hover:bg-sup-2 hover:text-rojo"
-              aria-label={`Quitar ${i.name} del pedido`}
-            >
-              <IcoPapelera />
-            </button>
+          <div key={lineKeyOf(i)} className="space-y-2 rounded-md border border-border px-3 py-2.5">
+            <div className="flex items-center gap-2">
+              <span className="min-w-0 flex-1 truncate text-sm font-medium">{i.name}</span>
+              <button
+                onClick={() => {
+                  setItems(items.filter((_, j) => j !== k));
+                  forgetQtyDraft(lineKeyOf(i));
+                }}
+                className="-mr-1 grid size-11 shrink-0 place-items-center rounded-sm text-muted-foreground transition-colors hover:bg-sup-2 hover:text-rojo sm:size-8"
+                aria-label={`Quitar ${i.name} del pedido`}
+              >
+                <IcoPapelera />
+              </button>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  inputMode="numeric"
+                  value={qtyDrafts[lineKeyOf(i)] ?? String(i.qty)}
+                  onFocus={(e) => e.target.select()}
+                  onChange={(e) => {
+                    // Igual criterio que en el mostrador: se guarda el texto
+                    // tal cual (permite dejarlo vacío un instante) y, si ya
+                    // parsea a un número válido, se aplica de una vez.
+                    const raw = e.target.value.replace(/\D/g, "");
+                    const key = lineKeyOf(i);
+                    setQtyDrafts((prev) => ({ ...prev, [key]: raw }));
+                    if (raw !== "") {
+                      const qty = parseInt(raw, 10);
+                      if (Number.isFinite(qty) && qty > 0) setQty(k, qty);
+                    }
+                  }}
+                  onBlur={() => {
+                    // Vacío o 0 al salir: vuelve a la cantidad anterior (no
+                    // elimina la línea, para eso está la papelera).
+                    forgetQtyDraft(lineKeyOf(i));
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                  }}
+                  aria-label={`Cantidad de ${i.name}`}
+                  className="num h-11 w-14 shrink-0 rounded border border-border bg-card px-2 text-center text-sm sm:h-9"
+                />
+                {/* Tipo de precio de esta línea sola, con el mismo control que el
+                    mostrador: único selector interactivo para esta línea. */}
+                {variosTipos && !i.bsOnly && (
+                  <PriceTypeControl
+                    priceTypes={s.priceTypes}
+                    value={i.priceTypeId}
+                    onChange={(id) => setLinePriceType(k, id)}
+                    ariaLabel={`Tipo de precio de ${i.name}`}
+                  />
+                )}
+                {variosTipos && i.bsOnly && (
+                  <span className="text-[11px] text-texto-3">Precio fijo Bs</span>
+                )}
+              </div>
+              <span className="text-right">
+                <span className="num block text-sm">{money.fmtBsAmount(lineBs(i, money))}</span>
+                {!i.bsOnly && (
+                  <span className="num block text-[10px] text-muted-foreground">
+                    {usd(i.subtotalUsd)}
+                  </span>
+                )}
+              </span>
+            </div>
           </div>
         ))}
       </div>

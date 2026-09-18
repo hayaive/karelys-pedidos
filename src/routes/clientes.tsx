@@ -15,9 +15,10 @@ import {
   Modal,
   Select,
 } from "@/components/ui-kit";
-import { mutate, useAppState, logAudit } from "@/lib/store";
+import { useAppState } from "@/lib/store";
 import { upsertCustomer } from "@/lib/business";
 import { validCedula } from "@/lib/format";
+import { deleteCustomer, deletionErrorText } from "@/lib/sync/deletions";
 import type { Customer } from "@/lib/types";
 
 export const Route = createFileRoute("/clientes")({
@@ -47,6 +48,7 @@ function Clientes() {
   const [estado, setEstado] = useState("todos");
   const [edit, setEdit] = useState<Partial<Customer> | null>(null);
   const [del, setDel] = useState<Customer | null>(null);
+  const [borrando, setBorrando] = useState(false);
 
   const list = s.customers.filter(
     (c) =>
@@ -200,12 +202,22 @@ function Clientes() {
         message={`¿Eliminar a ${del?.name}? Las ventas históricas conservarán su nombre.`}
         onCancel={() => setDel(null)}
         onConfirm={() => {
-          mutate((st) => {
-            st.customers = st.customers.filter((x) => x.id !== del!.id);
-            logAudit("cliente_eliminado", "customer", del!.id);
-          });
-          toast.success("Cliente eliminado");
-          setDel(null);
+          // El borrado va primero al servidor (§ deletions.ts) y sólo si confirma
+          // se toca el estado local: sin doble clic mientras la llamada está en vuelo.
+          if (borrando) return;
+          const target = del!;
+          setBorrando(true);
+          deleteCustomer(target)
+            .then(() => {
+              toast.success("Cliente eliminado");
+              setDel(null);
+            })
+            .catch((err) => {
+              toast.error("No se pudo eliminar el cliente", {
+                description: deletionErrorText(err),
+              });
+            })
+            .finally(() => setBorrando(false));
         }}
       />
     </>

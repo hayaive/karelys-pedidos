@@ -1,15 +1,18 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { IcoImprimir } from "@/chasis/iconos";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { AppShell, PageHead } from "@/components/app-shell";
 import { Badge, Btn, Card, CardHead, Empty, Field, Input, Textarea } from "@/components/ui-kit";
 import { logAudit, mutate, useAppState } from "@/lib/store";
 import { closureDraft } from "@/lib/business";
-import { dayKey, dt, usd } from "@/lib/format";
+import { bs, dayKey, dt, num, parseAmount, usd } from "@/lib/format";
+import { bsToUsd } from "@/lib/money";
 import { uid } from "@/lib/seed";
 import { useSession } from "@/lib/auth";
 import { useMoney } from "@/hooks/use-money";
+import { queueClosureCreate } from "@/lib/sync/mutations";
+import type { DailyClosure } from "@/lib/types";
 
 export const Route = createFileRoute("/cierre")({
   ssr: false,
@@ -34,6 +37,53 @@ export const Route = createFileRoute("/cierre")({
   ),
 });
 
+/** Por debajo de medio céntimo se considera cuadrado. */
+const EPS = 0.005;
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+const fmtIn = (currency: "USD" | "BS", amount: number) =>
+  currency === "USD" ? usd(amount) : bs(amount);
+
+/** "Exacto" si cuadra; si no, cuánto falta o sobra en la moneda indicada. */
+function Diferencia({ currency, amount }: { currency: "USD" | "BS"; amount: number }) {
+  if (Math.abs(amount) < EPS)
+    return (
+      <>
+        <span className="block text-[11px] text-muted-foreground">Diferencia</span>
+        <span className="block text-sm font-medium text-verde">Exacto</span>
+      </>
+    );
+  return (
+    <span className="text-rojo">
+      <span className="block text-[11px]">{amount < 0 ? "Faltan" : "Sobran"}</span>
+      <span className="num block text-sm">{fmtIn(currency, Math.abs(amount))}</span>
+    </span>
+  );
+}
+
+function TotalRow({
+  label,
+  value,
+  strong,
+  children,
+}: {
+  label: string;
+  value: string;
+  strong?: boolean;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      <span className={strong ? "flex-1 text-sm font-semibold" : "flex-1 text-sm"}>{label}</span>
+      <span className={"num text-right " + (strong ? "text-lg font-semibold" : "text-sm")}>
+        {value}
+      </span>
+      <span className="w-24 text-right sm:w-28">{children}</span>
+    </div>
+  );
+}
+
 function Cierre() {
   const s = useAppState();
   const money = useMoney();
@@ -44,16 +94,30 @@ function Cierre() {
   const [note, setNote] = useState("");
   const closed = s.closures.find((c) => c.date === day);
 
-  const recTotal = draft.byMethod.reduce(
-    (a, m) =>
-      a +
-      (received[m.methodId] !== undefined ? parseFloat(received[m.methodId] || "0") : m.expected),
-    0,
-  );
-  // Se compara contra el efectivo esperado (ventas del día + abonos recibidos
-  // hoy − vueltos), no contra lo facturado: un abono entra en caja el día en
-  // que se recibe, aunque el pedido se facture más adelante.
-  const diff = recTotal - draft.expectedUsd;
+  const rate = draft.rate;
+
+  // Cada método se cuenta en su moneda y se compara contra el efectivo esperado
+  // (ventas del día + abonos recibidos hoy − vueltos), no contra lo facturado:
+  // un abono entra en caja el día en que se recibe, aunque el pedido se facture
+  // más adelante. La diferencia en Bs se lleva a USD con la tasa BCV del día.
+  const rows = draft.byMethod.map((m) => {
+    const raw = received[m.methodId];
+    const counted = closed
+      ? (closed.byMethod.find((x) => x.methodId === m.methodId)?.receivedAmount ?? m.expectedAmount)
+      : raw !== undefined
+        ? parseAmount(raw)
+        : m.expectedAmount;
+    const countedAmount = Number.isFinite(counted) ? counted : 0;
+    const diffAmount = round2(countedAmount - m.expectedAmount);
+    const diffUsd = m.currency === "USD" ? diffAmount : bsToUsd(diffAmount, rate);
+    return { ...m, countedAmount, diffAmount, diffUsd };
+  });
+  const sumOf = (currency: "USD" | "BS", key: "countedAmount" | "diffAmount") =>
+    round2(rows.filter((r) => r.currency === currency).reduce((a, r) => a + r[key], 0));
+  const totalBs = sumOf("BS", "countedAmount");
+  const totalUsd = sumOf("USD", "countedAmount");
+  const totalGeneralUsd = totalUsd + bsToUsd(totalBs, rate);
+  const diff = round2(rows.reduce((a, r) => a + r.diffUsd, 0));
 
   return (
     <>
@@ -87,39 +151,67 @@ function Cierre() {
         </Card>
       </div>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-[1.2fr_1fr]">
-        <Card>
-          <CardHead title="Desglose por método" sub="Equivalente en bolívares" />
+      <div className="mt-4 grid gap-4 lg:grid-cols-[1.5fr_1fr]">
+        <Card className="@container">
+          <CardHead title="Desglose por método" sub="Cada método se cuenta en su moneda" />
           <div className="divide-y divide-border">
-            {draft.byMethod.map((m) => (
-              <div key={m.methodId} className="flex items-center gap-3 px-4 py-2.5">
-                <span className="flex-1 text-sm">{m.methodName}</span>
-                <span className="w-24 text-right">
-                  <span className="num block text-sm">{money.fmtBs(m.expected)}</span>
-                  <span className="num block text-[11px] text-muted-foreground">
-                    {usd(m.expected)}
+            {rows.map((m) => (
+              // Tarjeta angosta: método y diferencia arriba, esperado y campo abajo.
+              // Con ancho de sobra (según la tarjeta, no la ventana): todo en una fila.
+              <div
+                key={m.methodId}
+                className="grid grid-cols-[minmax(0,1fr)_10rem] items-center gap-x-3 gap-y-2 px-4 py-2.5 @xl:grid-cols-[minmax(0,1fr)_7rem_10rem_7rem]"
+              >
+                <span className="col-start-1 row-start-1 min-w-0 text-sm">
+                  {m.methodName}{" "}
+                  <span className="text-[11px] text-muted-foreground">
+                    · {m.currency === "USD" ? "USD" : "Bs"}
                   </span>
                 </span>
-                <Input
-                  className="num w-28 text-right"
-                  disabled={!!closed}
-                  value={received[m.methodId] ?? String(m.expected.toFixed(2))}
-                  onChange={(e) => setReceived({ ...received, [m.methodId]: e.target.value })}
-                />
+                <span className="col-start-1 row-start-2 @xl:col-start-2 @xl:row-start-1 @xl:text-right">
+                  <span className="block text-[11px] text-muted-foreground">Esperado</span>
+                  <span className="num block text-sm">{fmtIn(m.currency, m.expectedAmount)}</span>
+                </span>
+                <div className="relative col-start-2 row-start-2 @xl:col-start-3 @xl:row-start-1">
+                  <span className="pointer-events-none absolute inset-y-0 left-[0.7rem] flex items-center text-xs text-muted-foreground">
+                    {m.currency === "USD" ? "$" : "Bs"}
+                  </span>
+                  <Input
+                    className="num pl-8 text-right"
+                    inputMode="decimal"
+                    aria-label={`Contado en ${m.methodName}`}
+                    disabled={!!closed}
+                    value={
+                      closed
+                        ? num(m.countedAmount)
+                        : (received[m.methodId] ?? num(m.expectedAmount))
+                    }
+                    onChange={(e) => setReceived({ ...received, [m.methodId]: e.target.value })}
+                  />
+                </div>
+                <span className="col-start-2 row-start-1 text-right @xl:col-start-4">
+                  <Diferencia currency={m.currency} amount={m.diffAmount} />
+                </span>
               </div>
             ))}
           </div>
-          <div className="flex items-center justify-between border-t border-border px-4 py-3">
-            <span className="text-sm font-medium">Esperado / Recibido / Diferencia</span>
-            <span className="text-right">
-              <span className="num block text-sm">
-                {money.fmtBs(draft.expectedUsd)} · {money.fmtBs(recTotal)} ·{" "}
-                <span className={diff === 0 ? "text-verde" : "text-rojo"}>{money.fmtBs(diff)}</span>
-              </span>
-              <span className="num block text-[11px] text-muted-foreground">
-                {usd(draft.expectedUsd)} · {usd(recTotal)} · {usd(diff)}
-              </span>
-            </span>
+          <div className="space-y-2 border-t border-border px-4 py-3">
+            <TotalRow label="Total Bs" value={bs(totalBs)}>
+              <Diferencia currency="BS" amount={sumOf("BS", "diffAmount")} />
+            </TotalRow>
+            <TotalRow label="Total USD" value={usd(totalUsd)}>
+              <Diferencia currency="USD" amount={sumOf("USD", "diffAmount")} />
+            </TotalRow>
+            <div className="border-t border-border pt-2">
+              <TotalRow strong label="Total general $" value={rate ? usd(totalGeneralUsd) : "—"}>
+                {rate ? <Diferencia currency="USD" amount={diff} /> : null}
+              </TotalRow>
+              <p className="num mt-1 text-right text-[11px] text-muted-foreground">
+                {rate
+                  ? `Bs llevados a dólares a tasa BCV ${num(rate)}`
+                  : "Sin tasa BCV cargada: no se pueden llevar los Bs a dólares"}
+              </p>
+            </div>
           </div>
         </Card>
 
@@ -133,10 +225,12 @@ function Cierre() {
                   Cerrado por {closed.userName} · {dt(closed.closedAt)}
                 </p>
                 <p className="num text-sm">
-                  Diferencia registrada: {money.fmtBs(closed.differenceUsd)}{" "}
-                  <span className="text-xs text-muted-foreground">
-                    ({usd(closed.differenceUsd)})
-                  </span>
+                  Diferencia registrada:{" "}
+                  {Math.abs(closed.differenceUsd) < EPS ? (
+                    <span className="font-medium text-verde">Exacto</span>
+                  ) : (
+                    <span className="text-rojo">{usd(closed.differenceUsd)}</span>
+                  )}
                 </p>
                 {closed.note && <p className="text-sm text-muted-foreground">{closed.note}</p>}
               </>
@@ -150,30 +244,40 @@ function Cierre() {
                   className="w-full"
                   disabled={!can("close_cash") || draft.sales.length === 0}
                   onClick={() => {
+                    // Se arma el cierre una sola vez y se usa tal cual tanto para el
+                    // store local como para el payload de `closure.create`: así el
+                    // número que ve el cajero y el que sube a la cola son siempre el
+                    // mismo (`byMethod[].received` ya viene en USD, que es justo lo
+                    // que espera `CreateClosureDto`; ver `queueClosureCreate`).
+                    const newClosure: DailyClosure = {
+                      id: uid(),
+                      date: day,
+                      userId: user!.id,
+                      userName: user!.fullName,
+                      salesCount: draft.sales.length,
+                      totalUsd: draft.totalUsd,
+                      totalBs: draft.totalBs,
+                      byMethod: rows.map((m) => ({
+                        methodId: m.methodId,
+                        methodName: m.methodName,
+                        currency: m.currency,
+                        expected: m.expected,
+                        received: m.expected + m.diffUsd,
+                        expectedAmount: m.expectedAmount,
+                        receivedAmount: m.countedAmount,
+                      })),
+                      expectedUsd: draft.expectedUsd,
+                      receivedUsd: draft.expectedUsd + diff,
+                      differenceUsd: diff,
+                      rate,
+                      note,
+                      closedAt: new Date().toISOString(),
+                    };
                     mutate((st) => {
-                      st.closures.unshift({
-                        id: uid(),
-                        date: day,
-                        userId: user!.id,
-                        userName: user!.fullName,
-                        salesCount: draft.sales.length,
-                        totalUsd: draft.totalUsd,
-                        totalBs: draft.totalBs,
-                        byMethod: draft.byMethod.map((m) => ({
-                          ...m,
-                          received:
-                            received[m.methodId] !== undefined
-                              ? parseFloat(received[m.methodId] || "0")
-                              : m.expected,
-                        })),
-                        expectedUsd: draft.expectedUsd,
-                        receivedUsd: recTotal,
-                        differenceUsd: diff,
-                        note,
-                        closedAt: new Date().toISOString(),
-                      });
+                      st.closures.unshift(newClosure);
                       logAudit("cierre_caja", "closure", day, { diff });
                     });
+                    queueClosureCreate(newClosure);
                     toast.success("Caja cerrada");
                   }}
                 >

@@ -1,12 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { IcoImprimir, IcoMas, IcoPapelera } from "@/chasis/iconos";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AppShell, PageHead } from "@/components/app-shell";
 import { useSession } from "@/lib/auth";
 import { POS } from "@/components/pos";
 import { TicketPreview } from "@/components/ticket";
 import {
+  Aviso,
   Badge,
   Btn,
   Card,
@@ -32,6 +33,7 @@ import {
   setOrderStatus,
   updateOrder,
 } from "@/lib/business";
+import { clearDraft, draftHasContent, lineKeyOf, loadDraft, type PosDraft } from "@/lib/pos-draft";
 import { useMoney } from "@/hooks/use-money";
 import { dt, parseAmount, usd } from "@/lib/format";
 import type { Order, OrderStatus } from "@/lib/types";
@@ -73,6 +75,16 @@ function Pedidos() {
   const [depositingFor, setDepositingFor] = useState<Order | null>(null);
   const [printingFor, setPrintingFor] = useState<Order | null>(null);
   const [filter, setFilter] = useState<string>("activos");
+  // Borrador de "Nuevo pedido" sin terminar (ver lib/pos-draft): se relee cada
+  // vez que se vuelve de "creating" a la lista, porque mientras el POS
+  // estuvo montado fue él quien lo mantuvo actualizado en localStorage.
+  const [orderDraft, setOrderDraft] = useState<PosDraft | null>(null);
+  const [discardDraft, setDiscardDraft] = useState(false);
+
+  useEffect(() => {
+    if (creating) return;
+    setOrderDraft(loadDraft("order", s.sessionUserId ?? null));
+  }, [creating, s.sessionUserId]);
 
   useShortcuts({
     process_order: () => {
@@ -146,6 +158,25 @@ function Pedidos() {
         }
       />
 
+      {orderDraft && draftHasContent(orderDraft) && (
+        <div className="mb-4">
+          <Aviso tone="amber" title="Tienes un pedido sin terminar">
+            <p className="num">
+              {orderDraft.items.length} producto{orderDraft.items.length === 1 ? "" : "s"} ·{" "}
+              {orderDraft.customerName || "Consumidor final"}
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Btn size="sm" variant="amber" onClick={() => setCreating(true)}>
+                Continuar
+              </Btn>
+              <Btn size="sm" variant="ghost" onClick={() => setDiscardDraft(true)}>
+                Descartar
+              </Btn>
+            </div>
+          </Aviso>
+        </div>
+      )}
+
       {orders.length === 0 ? (
         <Card>
           <Empty
@@ -181,7 +212,11 @@ function Pedidos() {
                   </div>
                   <Badge
                     tone={
-                      o.status === "procesado" ? "green" : o.status === "cancelado" ? "red" : "amber"
+                      o.status === "procesado"
+                        ? "green"
+                        : o.status === "cancelado"
+                          ? "red"
+                          : "amber"
                     }
                   >
                     {STATUSES.find((x) => x.key === o.status)?.label}
@@ -311,6 +346,21 @@ function Pedidos() {
         }}
       />
 
+      <ConfirmDialog
+        open={discardDraft}
+        danger
+        title="Descartar pedido sin terminar"
+        message="¿Descartar el pedido sin terminar? Se perderán los productos, el cliente y la nota."
+        verbo="Descartar"
+        onCancel={() => setDiscardDraft(false)}
+        onConfirm={() => {
+          clearDraft("order", s.sessionUserId ?? null);
+          setOrderDraft(null);
+          setDiscardDraft(false);
+          toast.success("Pedido sin terminar descartado");
+        }}
+      />
+
       <Modal
         open={!!depositingFor}
         onClose={() => setDepositingFor(null)}
@@ -436,6 +486,28 @@ function EditOrder({ order, onClose }: { order: Order; onClose: () => void }) {
   const variosTipos = s.priceTypes.length > 1;
   const pricedItems = items.filter((i) => !i.bsOnly);
   const cartPriceType = commonPriceTypeId(items);
+  // Texto a medio tipear en el campo de cantidad de cada línea, igual que en
+  // el mostrador (ver LineRows en components/pos.tsx): permite borrar el
+  // dígito y tipear el número nuevo sin que salte de vuelta a 1.
+  const [qtyDrafts, setQtyDrafts] = useState<Record<string, string>>({});
+
+  function forgetQtyDraft(key: string) {
+    setQtyDrafts((prev) => {
+      if (!(key in prev)) return prev;
+      const { [key]: _omit, ...rest } = prev;
+      return rest;
+    });
+  }
+
+  function setQty(idx: number, qty: number) {
+    setItems((prev) =>
+      prev.map((x, j) =>
+        j === idx
+          ? { ...x, qty, subtotalUsd: (x.unitPriceUsd + (x.customizationPrice ?? 0)) * qty }
+          : x,
+      ),
+    );
+  }
 
   /** Repricea todo el pedido a un tipo, igual que en el mostrador (POS). */
   function applyPriceTypeToAll(id: string) {
@@ -470,11 +542,14 @@ function EditOrder({ order, onClose }: { order: Order; onClose: () => void }) {
       </div>
       <div className="space-y-2">
         {items.map((i, k) => (
-          <div key={k} className="space-y-2 rounded-md border border-border px-3 py-2.5">
+          <div key={lineKeyOf(i)} className="space-y-2 rounded-md border border-border px-3 py-2.5">
             <div className="flex items-center gap-2">
               <span className="min-w-0 flex-1 truncate text-sm font-medium">{i.name}</span>
               <button
-                onClick={() => setItems(items.filter((_, j) => j !== k))}
+                onClick={() => {
+                  setItems(items.filter((_, j) => j !== k));
+                  forgetQtyDraft(lineKeyOf(i));
+                }}
                 className="-mr-1 grid size-11 shrink-0 place-items-center rounded-sm text-muted-foreground transition-colors hover:bg-sup-2 hover:text-rojo sm:size-8"
                 aria-label={`Quitar ${i.name} del pedido`}
               >
@@ -484,23 +559,30 @@ function EditOrder({ order, onClose }: { order: Order; onClose: () => void }) {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-2">
                 <input
-                  type="number"
-                  min={1}
-                  value={i.qty}
+                  inputMode="numeric"
+                  value={qtyDrafts[lineKeyOf(i)] ?? String(i.qty)}
+                  onFocus={(e) => e.target.select()}
                   onChange={(e) => {
-                    const qty = Math.max(1, parseInt(e.target.value) || 1);
-                    setItems(
-                      items.map((x, j) =>
-                        j === k
-                          ? {
-                              ...x,
-                              qty,
-                              subtotalUsd: (x.unitPriceUsd + (x.customizationPrice ?? 0)) * qty,
-                            }
-                          : x,
-                      ),
-                    );
+                    // Igual criterio que en el mostrador: se guarda el texto
+                    // tal cual (permite dejarlo vacío un instante) y, si ya
+                    // parsea a un número válido, se aplica de una vez.
+                    const raw = e.target.value.replace(/\D/g, "");
+                    const key = lineKeyOf(i);
+                    setQtyDrafts((prev) => ({ ...prev, [key]: raw }));
+                    if (raw !== "") {
+                      const qty = parseInt(raw, 10);
+                      if (Number.isFinite(qty) && qty > 0) setQty(k, qty);
+                    }
                   }}
+                  onBlur={() => {
+                    // Vacío o 0 al salir: vuelve a la cantidad anterior (no
+                    // elimina la línea, para eso está la papelera).
+                    forgetQtyDraft(lineKeyOf(i));
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                  }}
+                  aria-label={`Cantidad de ${i.name}`}
                   className="num h-11 w-14 shrink-0 rounded border border-border bg-card px-2 text-center text-sm sm:h-9"
                 />
                 {/* Tipo de precio de esta línea sola, con el mismo control que el

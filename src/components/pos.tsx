@@ -24,6 +24,15 @@ import {
   unitBs,
 } from "@/lib/business";
 import { upsertCustomer } from "@/lib/business";
+import {
+  clearDraft,
+  draftHasContent,
+  lineKeyOf,
+  loadDraft,
+  revalidateDraft,
+  saveDraft,
+  type PosDraft,
+} from "@/lib/pos-draft";
 import { useMoney } from "@/hooks/use-money";
 import type { Money } from "@/lib/money";
 import { bs, num, parseAmount, usd, validCedula } from "@/lib/format";
@@ -32,6 +41,7 @@ import {
   Badge,
   Btn,
   Card,
+  ConfirmDialog,
   Field,
   Input,
   Modal,
@@ -84,7 +94,24 @@ export function POS({
   const money = useMoney();
   const rate = money.rate;
   const sc = shortcutsOf(s.company);
-  const [items, setItems] = useState<LineItem[]>(initialItems ?? []);
+  // El borrador automático sólo aplica a "montar" una venta directa o un
+  // pedido nuevo desde cero: al facturar un pedido existente (orderId) o al
+  // recibir líneas ya definidas (initialItems, mismo caso) las líneas son las
+  // del pedido, no trabajo en curso de este mostrador.
+  const draftEnabled = !orderId && !initialItems;
+  const userId = s.sessionUserId ?? null;
+  // Se lee y revalida una sola vez, al montar: los `useState` de abajo la
+  // consumen en sus inicializadores (que sólo corren en el primer render), y
+  // no debe re-sincronizarse sola si el catálogo cambia mientras el POS ya
+  // está montado (para eso están los reprecios explícitos del carrito).
+  const restored = useMemo(() => {
+    if (!draftEnabled) return null;
+    const draft = loadDraft(mode, userId);
+    if (!draft) return null;
+    return revalidateDraft(s, draft);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const [items, setItems] = useState<LineItem[]>(() => restored?.items ?? initialItems ?? []);
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("all");
   // Arranca en el tipo de precio predeterminado del negocio (Ajustes · Tipos
@@ -92,34 +119,45 @@ export function POS({
   // Al procesar un pedido arranca en el tipo común de sus líneas en vez del
   // predeterminado: si no lo hiciera, el control general (que sí lee las
   // líneas reales) podría mostrar un tipo mientras este estado —el que se
-  // usa para reprecios y productos nuevos— arranca en otro.
+  // usa para reprecios y productos nuevos— arranca en otro. Con borrador
+  // restaurado, el tipo que traía el borrador (ya revalidado) manda.
   const [priceTypeId, setPriceTypeId] = useState(() => {
+    if (restored) return restored.priceTypeId;
     const common = initialItems?.length ? commonPriceTypeId(initialItems) : null;
     return common ?? defaultPriceType(s)?.id ?? "";
   });
   const variosTipos = s.priceTypes.length > 1;
-  const [customer, setCustomer] = useState<Customer | null>(() =>
-    initialCustomerId ? (s.customers.find((c) => c.id === initialCustomerId) ?? null) : null,
-  );
+  const [customer, setCustomer] = useState<Customer | null>(() => {
+    if (restored)
+      return restored.customerId
+        ? (s.customers.find((c) => c.id === restored.customerId) ?? null)
+        : null;
+    return initialCustomerId ? (s.customers.find((c) => c.id === initialCustomerId) ?? null) : null;
+  });
   const lockedCustomer = !!orderId;
   const checkoutOnly = !!orderId; // Procesar pedido: solo cobrar, sin catálogo
   const displayCustomerName = customer?.name ?? initialCustomerName ?? "Consumidor final";
   // Al procesar un pedido la venta arranca con la nota del pedido, para que no
-  // se pierda en el ticket; en venta directa arranca vacía.
-  const [note, setNote] = useState(() =>
-    orderId ? (s.orders.find((o) => o.id === orderId)?.note ?? "") : "",
-  );
+  // se pierda en el ticket; en venta directa arranca vacía, salvo que haya
+  // borrador con nota guardada.
+  const [note, setNote] = useState(() => {
+    if (restored) return restored.note;
+    return orderId ? (s.orders.find((o) => o.id === orderId)?.note ?? "") : "";
+  });
   const [payOpen, setPayOpen] = useState(false);
   const [custQ, setCustQ] = useState("");
   const [custFocus, setCustFocus] = useState(false);
   const [newCustOpen, setNewCustOpen] = useState(false);
   const [customizeFor, setCustomizeFor] = useState<Product | null>(null);
   const [lastSale, setLastSale] = useState<Sale | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
   const depositMethods = s.paymentMethods.filter((m) => m.active);
-  const [depositOn, setDepositOn] = useState(false);
-  const [depositMethodId, setDepositMethodId] = useState(depositMethods[0]?.id ?? "");
-  const [depositAmount, setDepositAmount] = useState("");
-  const [depositReference, setDepositReference] = useState("");
+  const [depositOn, setDepositOn] = useState(() => restored?.deposit.on ?? false);
+  const [depositMethodId, setDepositMethodId] = useState(
+    () => restored?.deposit.methodId || depositMethods[0]?.id || "",
+  );
+  const [depositAmount, setDepositAmount] = useState(() => restored?.deposit.amount ?? "");
+  const [depositReference, setDepositReference] = useState(() => restored?.deposit.reference ?? "");
   const depositMethod = depositMethods.find((m) => m.id === depositMethodId);
   const depositRaw = parseAmount(depositAmount);
   const depositUsdPreview =
@@ -164,6 +202,82 @@ export function POS({
   // de leerlo como "Mixto".
   const pricedItems = items.filter((i) => !i.bsOnly);
   const cartPriceType = pricedItems.length ? commonPriceTypeId(items) : priceTypeId;
+  // Hay algo que un LIMPIAR se llevaría, o que vale la pena decir que se
+  // guardó solo. No depende de `draftEnabled` en el JSX: ya se usa para
+  // decidir si mostrar el botón/indicador, y fuera de sale/order nuevo
+  // simplemente no aplica.
+  const hasDraftableContent =
+    items.length > 0 || !!customer || note.trim() !== "" || (mode === "order" && depositOn);
+
+  // Avisa una sola vez, al montar, si la revalidación del borrador cambió
+  // algo (precios vigentes distintos o productos que ya no están disponibles).
+  useEffect(() => {
+    if (!restored) return;
+    if (restored.removedCount > 0) {
+      toast.info(
+        restored.removedCount === 1
+          ? "Se quitó 1 producto del borrador que ya no está disponible"
+          : `Se quitaron ${restored.removedCount} productos del borrador que ya no están disponibles`,
+      );
+    } else if (restored.pricesChanged) {
+      toast.info("Se actualizaron precios del borrador");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Autoguardado: cada cambio relevante se persiste como borrador de trabajo
+  // en curso (fuera de AppState, ver lib/pos-draft). Si el carrito quedó
+  // vacío (recién limpiado, o recién registrado y el componente sigue
+  // montado) se borra en vez de guardar un borrador sin contenido.
+  useEffect(() => {
+    if (!draftEnabled) return;
+    const draft: PosDraft = {
+      items,
+      customerId: customer?.id ?? null,
+      customerName: customer?.name ?? null,
+      note,
+      priceTypeId,
+      deposit:
+        mode === "order"
+          ? {
+              on: depositOn,
+              methodId: depositMethodId,
+              amount: depositAmount,
+              reference: depositReference,
+            }
+          : undefined,
+    };
+    if (draftHasContent(draft)) saveDraft(mode, userId, draft);
+    else clearDraft(mode, userId);
+  }, [
+    draftEnabled,
+    mode,
+    userId,
+    items,
+    customer,
+    note,
+    priceTypeId,
+    depositOn,
+    depositMethodId,
+    depositAmount,
+    depositReference,
+  ]);
+
+  /** LIMPIAR: deja el POS como recién montado. Pide confirmación desde el botón. */
+  function clearAll() {
+    setItems([]);
+    setCustomer(null);
+    setNote("");
+    setPriceTypeId(defaultPriceType(s)?.id ?? "");
+    if (mode === "order") {
+      setDepositOn(false);
+      setDepositAmount("");
+      setDepositReference("");
+    }
+    clearDraft(mode, userId);
+    setConfirmClear(false);
+    toast.success(mode === "order" ? "Pedido limpiado" : "Venta limpiada");
+  }
 
   useShortcuts({
     search_product: () => {
@@ -270,6 +384,32 @@ export function POS({
         .filter((i) => i.qty > 0),
     );
 
+  // Texto que se está tipeando en el campo de cantidad de cada línea, por
+  // clave estable de línea (ver `lineKeyOf`). Vacío mientras no se edita: el
+  // input muestra `i.qty` directamente. Permite borrar el dígito y tipear el
+  // número nuevo sin que el campo "salte" de vuelta a 1 en cada tecla.
+  const [qtyDrafts, setQtyDrafts] = useState<Record<string, string>>({});
+
+  function forgetQtyDraft(key: string) {
+    setQtyDrafts((prev) => {
+      if (!(key in prev)) return prev;
+      const { [key]: _omit, ...rest } = prev;
+      return rest;
+    });
+  }
+
+  /** Botones +/-: cambian la cantidad de una vez y descartan cualquier texto a medio tipear. */
+  function bumpQty(k: number, i: LineItem, delta: number) {
+    setQty(k, i.qty + delta);
+    forgetQtyDraft(lineKeyOf(i));
+  }
+
+  /** Papelera: quita la línea del carrito (gesto explícito, no lo hace un campo vacío). */
+  function removeLine(k: number, i: LineItem) {
+    setQty(k, 0);
+    forgetQtyDraft(lineKeyOf(i));
+  }
+
   function saveOrder() {
     if (!items.length) return toast.error("Agrega productos al pedido");
     let deposit: { methodId: string; amount: number; reference?: string } | undefined;
@@ -301,6 +441,11 @@ export function POS({
     setDepositOn(false);
     setDepositAmount("");
     setDepositReference("");
+    // Explícito y no sólo vía el autoguardado: `onDone` puede desmontar este
+    // componente en el mismo commit (Pedidos cierra "Nuevo pedido" al volver
+    // a la lista), y el efecto de autoguardado nunca llegaría a correr con el
+    // carrito ya vacío.
+    if (draftEnabled) clearDraft(mode, userId);
     onDone?.();
   }
 
@@ -318,7 +463,7 @@ export function POS({
         const lineProduct = s.products.find((pr) => pr.id === i.productId);
         const lineOutOfStock = lineProduct ? isOutOfStock(lineProduct) : false;
         return (
-          <div key={k} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-3">
+          <div key={lineKeyOf(i)} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-3">
             {/* El nombre ocupa toda la fila en teléfono para que el resto no se apriete. */}
             <div className="min-w-0 basis-full sm:basis-auto sm:flex-1">
               <p className="flex min-w-0 items-center gap-2 text-sm font-medium">
@@ -356,24 +501,46 @@ export function POS({
                   icono
                   size="sm"
                   className="size-11 sm:size-[1.95rem]"
-                  onClick={() => setQty(k, i.qty - 1)}
+                  onClick={() => bumpQty(k, i, -1)}
                   aria-label={`Quitar una unidad de ${i.name}`}
                 >
                   <IcoMenos />
                 </Btn>
                 <input
                   className={cn(inputCls, "num h-11 w-12 text-center sm:h-9 sm:w-14")}
-                  value={i.qty}
+                  inputMode="numeric"
+                  value={qtyDrafts[lineKeyOf(i)] ?? String(i.qty)}
+                  onFocus={(e) => e.target.select()}
                   onChange={(e) => {
-                    const v = parseInt(e.target.value.replace(/\D/g, ""), 10);
-                    if (Number.isFinite(v)) setQty(k, v);
+                    // Se guarda el texto tal cual mientras se edita (permite
+                    // dejarlo vacío un instante) y, si ya parsea a un número
+                    // válido, se aplica de una vez para que el subtotal se
+                    // vea en vivo.
+                    const raw = e.target.value.replace(/\D/g, "");
+                    const key = lineKeyOf(i);
+                    setQtyDrafts((prev) => ({ ...prev, [key]: raw }));
+                    if (raw !== "") {
+                      const v = parseInt(raw, 10);
+                      if (Number.isFinite(v) && v > 0) setQty(k, v);
+                    }
                   }}
+                  onBlur={() => {
+                    // Al salir se descarta el texto a medio tipear: si quedó
+                    // vacío o en 0 nunca se aplicó (ver onChange), así que el
+                    // campo vuelve a mostrar `i.qty`, la última cantidad
+                    // válida. No elimina la línea: para eso está la papelera.
+                    forgetQtyDraft(lineKeyOf(i));
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                  }}
+                  aria-label={`Cantidad de ${i.name}`}
                 />
                 <Btn
                   icono
                   size="sm"
                   className="size-11 sm:size-[1.95rem]"
-                  onClick={() => setQty(k, i.qty + 1)}
+                  onClick={() => bumpQty(k, i, 1)}
                   aria-label={`Agregar una unidad de ${i.name}`}
                 >
                   <IcoMas />
@@ -391,7 +558,7 @@ export function POS({
                   variant="ghost"
                   size="sm"
                   className="size-11 shrink-0 text-muted-foreground hover:text-rojo sm:size-[1.95rem]"
-                  onClick={() => setQty(k, 0)}
+                  onClick={() => removeLine(k, i)}
                   aria-label={`Quitar ${i.name} del pedido`}
                 >
                   <IcoPapelera />
@@ -607,9 +774,28 @@ export function POS({
 
       {/* Resumen */}
       <Card className="p-4 lg:sticky lg:top-20 lg:self-start">
-        <h2 className="mb-3 text-[0.95rem] font-semibold">
-          {mode === "order" ? "Resumen del pedido" : "Resumen de la venta"}
-        </h2>
+        <div className="mb-3 flex items-start justify-between gap-2">
+          <div>
+            <h2 className="text-[0.95rem] font-semibold">
+              {mode === "order" ? "Resumen del pedido" : "Resumen de la venta"}
+            </h2>
+            {/* El borrador se guarda solo en cada cambio (ver el efecto de
+                autoguardado arriba): esto sólo se lo dice al usuario. */}
+            {draftEnabled && hasDraftableContent && (
+              <p className="text-[11px] text-muted-foreground">Borrador guardado</p>
+            )}
+          </div>
+          {draftEnabled && hasDraftableContent && (
+            <Btn
+              size="sm"
+              variant="ghost"
+              className="h-11 shrink-0 text-muted-foreground hover:text-rojo sm:h-[1.95rem]"
+              onClick={() => setConfirmClear(true)}
+            >
+              Limpiar
+            </Btn>
+          )}
+        </div>
         <div className="border-t border-border py-3">
           <p className="text-xs text-muted-foreground">Cliente</p>
           <p className="truncate text-sm font-semibold uppercase">{displayCustomerName}</p>
@@ -862,6 +1048,11 @@ export function POS({
           setCustomer(null);
           setNote("");
           setPayOpen(false);
+          // Igual que en saveOrder: explícito porque onDone puede desmontar
+          // el POS antes de que el autoguardado llegue a correr. Sólo aplica
+          // a venta directa (draftEnabled): al facturar un pedido existente
+          // no hay borrador propio que borrar aquí.
+          if (draftEnabled) clearDraft(mode, userId);
           onDone?.();
         }}
       />
@@ -873,6 +1064,20 @@ export function POS({
       >
         {lastSale && <TicketPreview sale={lastSale} />}
       </Modal>
+
+      <ConfirmDialog
+        open={confirmClear}
+        danger
+        title={mode === "order" ? "Limpiar pedido" : "Limpiar venta"}
+        message={
+          mode === "order"
+            ? "¿Limpiar el pedido? Se quitarán los productos, el cliente, la nota y el abono."
+            : "¿Limpiar la venta? Se quitarán los productos, el cliente y la nota."
+        }
+        verbo="Limpiar"
+        onCancel={() => setConfirmClear(false)}
+        onConfirm={clearAll}
+      />
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
+  IcoAlerta,
   IcoDatos,
   IcoEtiquetas,
   IcoImprimir,
@@ -12,6 +13,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { AppShell, PageHead } from "@/components/app-shell";
 import {
+  Aviso,
   Badge,
   Btn,
   Card,
@@ -24,9 +26,17 @@ import {
 } from "@/components/ui-kit";
 import { getState, logAudit, mutate, resetDatabase, useAppState } from "@/lib/store";
 import { categoryErrorText, createCategory, useCategoryAccess } from "@/lib/sync/categories";
+import {
+  createPriceType,
+  deletePriceType,
+  priceTypeErrorText,
+  renamePriceType,
+  setDefaultPriceType,
+  usePriceTypeAccess,
+} from "@/lib/sync/price-types";
 import { uid } from "@/lib/seed";
 import { dt, num, usd } from "@/lib/format";
-import { ALL_PERMISSIONS, type Permission, type User } from "@/lib/types";
+import { ALL_PERMISSIONS, type Permission, type PriceType, type User } from "@/lib/types";
 import { useSession } from "@/lib/auth";
 
 export const Route = createFileRoute("/ajustes")({
@@ -492,69 +502,227 @@ function Tasas() {
 
 function Precios() {
   const s = useAppState();
+  const acceso = usePriceTypeAccess();
   const [name, setName] = useState("");
+  const [creando, setCreando] = useState(false);
+
+  const bloqueado = acceso.mode === "blocked";
+  const motivo = acceso.mode === "blocked" ? acceso.reason : undefined;
+
+  async function agregar() {
+    if (bloqueado || creando || !name.trim()) return;
+    setCreando(true);
+    try {
+      const pt = await createPriceType(name);
+      setName("");
+      toast.success(`Tipo de precio "${pt.name}" creado`);
+    } catch (err) {
+      toast.error("No se pudo crear el tipo de precio", { description: priceTypeErrorText(err) });
+    } finally {
+      setCreando(false);
+    }
+  }
+
   return (
     <Card className="max-w-xl">
-      <CardHead title="Tipos de precio" sub="Configurables: agrega tantos como necesites" />
+      <CardHead
+        title="Tipos de precio"
+        sub={
+          acceso.mode === "local"
+            ? "Configurables: agrega tantos como necesites"
+            : "Se gestionan en el servidor: hace falta conexión."
+        }
+      />
+      {motivo && (
+        <div className="px-3 pt-3">
+          <Aviso tone="amber" icon={IcoAlerta}>
+            {motivo}
+          </Aviso>
+        </div>
+      )}
       <div className="flex flex-wrap gap-2 border-b border-border p-3">
         <Input
           placeholder="Nuevo tipo de precio"
           value={name}
+          maxLength={60}
+          disabled={bloqueado || creando}
+          title={motivo}
           onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void agregar();
+          }}
         />
         <Btn
           variant="amber"
-          onClick={() => {
-            if (!name.trim()) return;
-            mutate((st) => st.priceTypes.push({ id: uid(), name: name.trim(), isDefault: false }));
-            setName("");
-            toast.success("Tipo de precio creado");
-          }}
+          disabled={bloqueado || !name.trim()}
+          cargando={creando}
+          title={motivo}
+          onClick={() => void agregar()}
         >
           Agregar
         </Btn>
       </div>
       <div className="divide-y divide-border">
         {s.priceTypes.map((p) => (
-          <div key={p.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5">
-            <input
-              defaultValue={p.name}
-              onBlur={(e) =>
-                mutate((st) => {
-                  const pt = st.priceTypes.find((x) => x.id === p.id);
-                  if (pt) pt.name = e.target.value;
-                })
-              }
-              className="flex-1 bg-transparent text-sm outline-none"
-            />
-            {p.isDefault ? (
-              <Badge tone="amber">Predeterminado</Badge>
-            ) : (
-              <Btn
-                size="sm"
-                variant="ghost"
-                onClick={() =>
-                  mutate((st) => st.priceTypes.forEach((x) => (x.isDefault = x.id === p.id)))
-                }
-              >
-                Hacer predeterminado
-              </Btn>
-            )}
-            {s.priceTypes.length > 1 && (
-              <Btn
-                size="sm"
-                variant="ghost"
-                onClick={() =>
-                  mutate((st) => (st.priceTypes = st.priceTypes.filter((x) => x.id !== p.id)))
-                }
-              >
-                Eliminar
-              </Btn>
-            )}
-          </div>
+          <FilaPrecio
+            key={p.id}
+            pt={p}
+            // Cuántos productos tienen un precio cargado con este tipo: cortesía
+            // para no ir al servidor de balde, no la garantía (el servidor niega
+            // el borrado con `has_history` si de verdad está en uso).
+            productos={
+              s.products.filter((x) => x.prices.some((pr) => pr.priceTypeId === p.id)).length
+            }
+            eliminable={s.priceTypes.length > 1}
+            bloqueado={bloqueado}
+            motivo={motivo}
+          />
         ))}
       </div>
     </Card>
+  );
+}
+
+function FilaPrecio({
+  pt,
+  productos,
+  eliminable,
+  bloqueado,
+  motivo,
+}: {
+  pt: PriceType;
+  productos: number;
+  eliminable: boolean;
+  bloqueado: boolean;
+  motivo?: string;
+}) {
+  const [name, setName] = useState(pt.name);
+  /** El nombre que trajo el estado la última vez que se sincronizó con el input. */
+  const [adoptado, setAdoptado] = useState(pt.name);
+  const [guardando, setGuardando] = useState(false);
+  const [marcando, setMarcando] = useState(false);
+  const [borrando, setBorrando] = useState(false);
+
+  // El nombre cambió en el estado (lo renombró otro equipo y llegó por sync, o
+  // acabó de confirmarlo el servidor): el input adopta el valor autoritativo en
+  // lugar de quedarse enseñando uno viejo.
+  if (adoptado !== pt.name) {
+    setAdoptado(pt.name);
+    setName(pt.name);
+  }
+
+  const ocupado = guardando || marcando || borrando;
+
+  async function guardarNombre() {
+    const limpio = name.trim();
+    if (ocupado || limpio === pt.name) {
+      setName(pt.name);
+      return;
+    }
+    if (!limpio) {
+      setName(pt.name);
+      toast.error("El tipo de precio necesita un nombre");
+      return;
+    }
+    // Red de seguridad: el input ya está deshabilitado, pero si el acceso se cayó
+    // mientras se escribía, el cambio se revierte en lugar de quedarse sólo aquí.
+    if (bloqueado) {
+      setName(pt.name);
+      toast.error("No se pudo renombrar el tipo de precio", { description: motivo });
+      return;
+    }
+    setGuardando(true);
+    try {
+      await renamePriceType(pt.id, limpio);
+      toast.success("Tipo de precio actualizado");
+    } catch (err) {
+      setName(pt.name);
+      toast.error("No se pudo renombrar el tipo de precio", {
+        description: priceTypeErrorText(err),
+      });
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  async function hacerPredeterminado() {
+    if (ocupado || bloqueado) return;
+    setMarcando(true);
+    try {
+      await setDefaultPriceType(pt.id);
+      toast.success(`"${pt.name}" es ahora el tipo de precio predeterminado`);
+    } catch (err) {
+      toast.error("No se pudo marcar como predeterminado", {
+        description: priceTypeErrorText(err),
+      });
+    } finally {
+      setMarcando(false);
+    }
+  }
+
+  async function eliminar() {
+    if (ocupado || bloqueado) return;
+    // El servidor también lo niega (409 `has_history`): esto evita el viaje.
+    if (productos > 0) {
+      toast.error("El tipo de precio está en uso en productos");
+      return;
+    }
+    setBorrando(true);
+    try {
+      await deletePriceType(pt.id);
+      toast.success("Tipo de precio eliminado");
+    } catch (err) {
+      toast.error("No se pudo eliminar el tipo de precio", {
+        description: priceTypeErrorText(err),
+      });
+    } finally {
+      setBorrando(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5">
+      <input
+        value={name}
+        maxLength={60}
+        disabled={bloqueado || ocupado}
+        title={motivo}
+        aria-label={`Nombre del tipo de precio ${pt.name}`}
+        onChange={(e) => setName(e.target.value)}
+        onBlur={() => void guardarNombre()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") setName(pt.name);
+        }}
+        className="flex-1 bg-transparent text-sm outline-none disabled:cursor-not-allowed disabled:opacity-60"
+      />
+      {pt.isDefault ? (
+        <Badge tone="amber">Predeterminado</Badge>
+      ) : (
+        <Btn
+          size="sm"
+          variant="ghost"
+          disabled={bloqueado}
+          cargando={marcando}
+          title={motivo}
+          onClick={() => void hacerPredeterminado()}
+        >
+          Hacer predeterminado
+        </Btn>
+      )}
+      {eliminable && (
+        <Btn
+          size="sm"
+          variant="ghost"
+          disabled={bloqueado}
+          cargando={borrando}
+          title={motivo}
+          onClick={() => void eliminar()}
+        >
+          Eliminar
+        </Btn>
+      )}
+    </div>
   );
 }
 

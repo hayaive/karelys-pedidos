@@ -59,9 +59,9 @@ import { shortcutsOf, useShortcuts } from "@/lib/shortcuts";
  * Sólo informativo: marca un producto para las etiquetas "Sin stock"/"Se
  * agotó" en la búsqueda y en el carrito. NO bloquea seleccionarlo, subir su
  * cantidad ni cobrar — el negocio decide vender lo que el conteo dice que no
- * hay y lo cuadra después con un ajuste de inventario (mismo criterio que ya
- * aplica el backend, ver inventory.service.ts: "stock puede quedar negativo
- * a propósito").
+ * hay y lo cuadra después con un ajuste de inventario. El stock nunca queda
+ * negativo: la venta recorta la salida a 0 (mismo criterio que aplica el
+ * backend, ver inventory.service.ts).
  *
  * Excepción: los combos (`isCombo`) usan su campo `stock` como un valor
  * placeholder que el motor de negocio nunca decrementa al vender (ver
@@ -294,9 +294,8 @@ export function POS({
   function add(p: Product, customization?: string) {
     // El stock nunca bloquea: es informativo (etiqueta "Sin stock"/"Se agotó"),
     // no un límite duro. El negocio decide vender lo que el conteo dice que no
-    // hay y lo cuadra después con un ajuste de inventario — mismo criterio que
-    // ya aplica el backend (ver inventory.service.ts, "stock puede quedar
-    // negativo a propósito").
+    // hay; la existencia sólo se recorta a 0, nunca queda negativa (mismo
+    // criterio que aplica el backend, ver inventory.service.ts).
     if (p.allowCustomization && customization === undefined && !customizeFor) {
       setCustomizeFor(p);
       return;
@@ -734,7 +733,7 @@ export function POS({
                     </span>
                     <span className="min-w-0 flex-1 truncate text-sm font-medium">{p.name}</span>
                     {outOfStock && <Badge tone="red">Sin stock</Badge>}
-                    {low && <Badge tone="red">{p.stock}</Badge>}
+                    {low && <Badge tone="red">{Math.max(0, p.stock)}</Badge>}
                     <span className="w-24 shrink-0 text-right">
                       <span className="num block text-sm font-semibold text-sol-70">
                         {p.bsOnly
@@ -785,14 +784,16 @@ export function POS({
               <p className="text-[11px] text-muted-foreground">Borrador guardado</p>
             )}
           </div>
-          {draftEnabled && hasDraftableContent && (
+          {/* Siempre a la vista (deshabilitado si no hay nada que borrar): si sólo
+              aparecía con contenido, pasaba desapercibido justo cuando hacía falta. */}
+          {draftEnabled && (
             <Btn
               size="sm"
-              variant="ghost"
-              className="h-11 shrink-0 text-muted-foreground hover:text-rojo sm:h-[1.95rem]"
+              className="h-11 shrink-0 hover:border-rojo hover:text-rojo sm:h-[1.95rem]"
+              disabled={!hasDraftableContent}
               onClick={() => setConfirmClear(true)}
             >
-              Limpiar
+              <IcoPapelera /> Limpiar todo
             </Btn>
           )}
         </div>

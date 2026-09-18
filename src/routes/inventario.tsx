@@ -15,20 +15,16 @@ import {
   Field,
   Input,
   Modal,
+  Palanca,
   Select,
   Textarea,
 } from "@/components/ui-kit";
-import { PriceAlertAviso } from "@/components/price-alert";
+import { PriceAlertsAviso } from "@/components/price-alert";
+import { useMoney } from "@/hooks/use-money";
 import { logAudit, mutate, useAppState } from "@/lib/store";
 import { addMovement, priceOf } from "@/lib/business";
 import { nextProductCode } from "@/lib/catalog";
-import {
-  companyPriceRule,
-  defaultPriceType,
-  isGenericColdCake,
-  priceAlertKey,
-  priceAlerts,
-} from "@/lib/pricing";
+import { companyPriceRule, defaultPriceType, isPriceBanded, priceAlerts } from "@/lib/pricing";
 import { queueProductCreate, queueProductUpdate } from "@/lib/sync/mutations";
 import {
   categoryErrorText,
@@ -124,10 +120,8 @@ function Inventario() {
       />
 
       {alerts.length > 0 && (
-        <div className="mb-4 space-y-2">
-          {alerts.map((a) => (
-            <PriceAlertAviso key={priceAlertKey(a)} alert={a} canFix={can("edit_inventory")} />
-          ))}
+        <div className="mb-4">
+          <PriceAlertsAviso alerts={alerts} canFix={can("edit_inventory")} />
         </div>
       )}
 
@@ -218,7 +212,7 @@ function Inventario() {
                             (p.stock <= p.minStock ? "text-rojo" : "")
                           }
                         >
-                          {p.stock}
+                          {Math.max(0, p.stock)}
                         </td>
                         <td className="num px-4 py-2.5 text-right text-muted-foreground">
                           {p.minStock}
@@ -301,7 +295,7 @@ function Inventario() {
                       </div>
                       <div className="mt-2 flex items-center gap-2">
                         <Badge tone={p.stock <= p.minStock ? "red" : "neutral"}>
-                          Stock {p.stock}
+                          Stock {Math.max(0, p.stock)}
                         </Badge>
                         <Badge tone={p.active ? "green" : "neutral"}>
                           {p.active ? "Activo" : "Inactivo"}
@@ -387,15 +381,25 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
     const rest = (f.prices ?? []).filter((x) => x.priceTypeId !== ptId);
     setF({ ...f, prices: [...rest, { priceTypeId: ptId, amount: v }] });
   };
-  /* El genérico de tortas frías es el único producto con alerta de precio bajo.
-     El aviso es **informativo y no bloquea**: su precio se edita aquí como el de
-     cualquier otro producto (la indirección del grupo de precio desapareció en
-     el esquema 6); lo único que hace la regla es avisar cuando el equivalente en
-     USD se queda corto. Se mira el producto ya guardado, no el borrador: es el
-     que evalúa `priceAlerts`. */
-  const guardado = f.id ? s.products.find((p) => p.id === f.id) : undefined;
-  const conAlerta = !!guardado && isGenericColdCake(guardado);
+  /* Precio sujeto al rango de Ajustes (switch de abajo). Es **informativo y no
+     bloquea**: sólo hace que el producto aparezca en la lista de precios por
+     debajo del mínimo cuando su equivalente en USD se queda corto —también
+     porque suba la tasa, sin que nadie lo edite—. Un producto viejo sin el campo
+     se muestra con lo que vale hoy (`isPriceBanded`: el genérico de tortas frías
+     queda marcado). */
+  const money = useMoney();
+  const sujeto = f.priceBand ?? (f.id ? isPriceBanded(f as Product) : false);
   const regla = companyPriceRule(s);
+  // Precio del borrador en USD, para avisar aquí mismo si ya nace por debajo:
+  // el de Bs a la tasa de hoy, o el menor de los precios por tipo.
+  const precioUsd = f.bsOnly
+    ? money.missing
+      ? null
+      : money.toUsd(f.bsPrice ?? 0)
+    : s.priceTypes.length
+      ? Math.min(...s.priceTypes.map((pt) => price(pt.id)))
+      : null;
+  const debajo = sujeto && precioUsd !== null && precioUsd < regla.minUsd;
 
   return (
     <div className="grid gap-3 sm:grid-cols-2">
@@ -453,16 +457,6 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
           onChange={(e) => setF({ ...f, minStock: parseFloat(e.target.value) || 0 })}
         />
       </Field>
-      {conAlerta && (
-        <div className="sm:col-span-2">
-          <Aviso tone="amber" icon={IcoAlerta} title="Este producto tiene alerta de precio bajo">
-            Si su precio se queda por debajo de {usd(regla.minUsd)} —también porque suba la tasa,
-            sin que nadie lo edite— aparece un aviso para subirlo a {usd(regla.targetUsd)}. El
-            mínimo y el objetivo se configuran en <strong>Ajustes · Impresión y numeración</strong>.
-            Nada de esto bloquea la venta ni la edición del precio.
-          </Aviso>
-        </div>
-      )}
       <div className="sm:col-span-2">
         <p className="mb-2 text-xs font-medium text-muted-foreground">Precios por tipo (USD)</p>
         <div className="grid gap-2 sm:grid-cols-3">
@@ -509,6 +503,26 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
           />
         </Field>
       )}
+      <div className="rounded-md border border-border bg-sup-2 p-3 sm:col-span-2">
+        <Palanca
+          checked={sujeto}
+          onChange={(v) => setF({ ...f, priceBand: v })}
+          hint={
+            <>
+              Mínimo {usd(regla.minUsd)} · máximo {usd(regla.targetUsd)} (Ajustes · Impresión y
+              numeración). Si el precio queda por debajo del mínimo —también porque suba la tasa—
+              aparece en la lista de precios fuera de rango para corregirlo. No bloquea la venta.
+            </>
+          }
+        >
+          Sujetar el precio al rango mínimo y máximo
+        </Palanca>
+        {debajo && (
+          <p className="num mt-2 text-[0.79rem] font-medium text-rojo">
+            Con la tasa de hoy este precio equivale a {usd(precioUsd!)}: está por debajo del mínimo.
+          </p>
+        )}
+      </div>
       <Field label="Estado">
         <Select
           value={f.active ? "1" : "0"}
@@ -598,6 +612,7 @@ function ProductForm({ draft, onClose }: { draft: Partial<Product>; onClose: () 
                   active: f.active ?? true,
                   bsOnly: f.bsOnly,
                   bsPrice: f.bsPrice,
+                  priceBand: f.priceBand ?? false,
                   prices: f.prices ?? [],
                   createdAt: new Date().toISOString(),
                 };
@@ -669,7 +684,12 @@ function MovementForm({ product, onClose }: { product: Product; onClose: () => v
   };
   return (
     <div className="space-y-3">
-      <p className="num text-sm text-muted-foreground">Stock actual: {product.stock}</p>
+      {/* Sólo en pantalla: si el stock viene negativo de datos viejos (previos a
+          esta regla) se muestra como 0, aunque el número real todavía no haya
+          llegado del servidor. */}
+      <p className="num text-sm text-muted-foreground">
+        Stock actual: {Math.max(0, product.stock)}
+      </p>
       <Field label="Tipo">
         <Select
           value={type}
@@ -704,6 +724,14 @@ function MovementForm({ product, onClose }: { product: Product; onClose: () => v
           onClick={() => {
             const n = parseFloat(qty);
             if (!Number.isFinite(n) || n < 0) return toast.error("Cantidad inválida");
+            // Sólo la salida manual se bloquea si supera la existencia: es un
+            // conteo de kardex, no una venta. Si el conteo real es otro, el
+            // usuario debe pasar por Ajuste (fija la existencia) en vez de que
+            // la salida la recorte a 0 en silencio.
+            if (type === "salida" && n > Math.max(product.stock, 0))
+              return toast.error(
+                "La salida supera la existencia; si el conteo real es otro, usa Ajuste",
+              );
             addMovement(product.id, n, type, reason, note);
             toast.success("Movimiento registrado");
             onClose();

@@ -439,6 +439,11 @@ function applyDeletions(s: AppState, deletions: DeltaDeletion[]) {
       case "payment_method":
         s.paymentMethods = s.paymentMethods.filter((x) => x.id !== id);
         break;
+      case "closure":
+        // Cierre reabierto en otro equipo (`DELETE /closures/:id`): el día
+        // vuelve a quedar abierto aquí también.
+        s.closures = s.closures.filter((x) => x.id !== id);
+        break;
       case "order":
         s.orders = s.orders.filter((x) => x.id !== id);
         break;

@@ -1,47 +1,51 @@
 /**
- * Refresco automático de tasas (BCV USD, paralelo/Binance y BCV EUR).
+ * Refresco automático de tasas (BCV USD, paralelo/Binance y BCV EUR): **una vez
+ * al día**, la primera vez que alguien entra.
  *
- * Se consulta la API:
- *  - al entrar al sistema (carga de la app con sesión, o al iniciar sesión);
- *  - en cada cambio de pantalla;
- *  - cada 5 minutos mientras la app está a la vista;
- *  - al volver a la app (pestaña o PWA que regresa a primer plano), porque la
- *    app instalada puede quedarse abierta días sin recargarse.
+ * Regla del negocio: la tasa se trae sola una sola vez por día, y a partir de
+ * ahí manda lo que haya —si alguien la corrige a mano, esa corrección se mantiene
+ * el resto del día—. Al día siguiente, el primero que entra la vuelve a traer.
+ * Antes se consultaba en cada cambio de pantalla y cada 5 minutos, y eso pisaba
+ * cualquier tasa editada a mano.
  *
- * Antes sólo se disparaba una vez por carga y sólo si la tasa ya estaba vencida
- * (más de `company.rateMaxAgeHours`), así que con la PWA abierta la tasa se
- * quedaba congelada aunque el BCV ya hubiera publicado una nueva.
+ * "Ya se trajo hoy" se lee de los datos, no de una marca local: hay tasa BCV
+ * publicada hoy (automática o manual) → no se consulta nada. Así vale para todos
+ * los equipos, porque la tasa que publicó el primero llega a los demás por la
+ * sincronización. Por eso, con backend, se espera al primer ciclo de sync de esta
+ * carga antes de decidir: sin esa espera, un equipo que abre con datos de ayer
+ * volvería a traerla aunque otro ya lo hubiera hecho. El backend aplica la misma
+ * regla a su tarea programada (`RatesCron`).
  *
- * Publicar no es gratis —el log de tasas es append-only—, así que
- * `fetchRatesFromApi` sólo publica cuando el valor cambió o la vigente venció.
- * Aquí sólo se evita lanzar una consulta mientras otra sigue en curso.
+ * Se comprueba al entrar, en cada cambio de pantalla y al volver a la app: la
+ * comprobación es local y gratis (no llama a la API si ya hay tasa de hoy), y
+ * esos momentos cubren la app que se queda abierta de un día para otro.
  *
  * Falla en silencio: es un refresco de fondo que el usuario no pidió, así que
  * un error de red aquí no debe ser tan intrusivo como el botón manual "Traer
- * de API" de `VentanaMercado` (ese sí le muestra su propio toast de error a
- * quien lo pulsó a propósito).
+ * de API" de `VentanaMercado`, que sigue disponible para actualizar a propósito.
  */
 import { useEffect } from "react";
 import { useRouterState } from "@tanstack/react-router";
 import { useHydrated } from "@/components/app-shell";
 import { useSession } from "@/lib/auth";
-import { fetchRatesFromApi } from "@/lib/business";
-
-/** Consulta periódica mientras la app está a la vista, para que la tasa no se
- *  quede fija si nadie cambia de pantalla. */
-const REFRESH_EVERY_MS = 5 * 60 * 1000;
+import { fetchRatesFromApi, hasRateToday } from "@/lib/business";
+import { getState } from "@/lib/store";
+import { SYNC_ENABLED } from "@/lib/sync/config";
+import { useSyncStatus } from "@/lib/sync/engine";
+import { hasRemoteSession } from "@/lib/sync/session";
 
 /** Módulo, no componente: una sola consulta en vuelo aunque varias pantallas
  *  o eventos la pidan a la vez. */
 let inFlight: Promise<void> | null = null;
 
-function refreshRates() {
+function refreshRatesOncePerDay() {
   if (inFlight) return;
-  inFlight = fetchRatesFromApi()
+  if (hasRateToday(getState(), "BCV_USD")) return;
+  inFlight = fetchRatesFromApi({ oncePerDay: true })
     .then((r) => {
-      if (!r.ok) console.warn("[rates] refresco automático:", r.message);
+      if (!r.ok) console.warn("[rates] refresco del día:", r.message);
     })
-    .catch((err) => console.warn("[rates] refresco automático falló", err))
+    .catch((err) => console.warn("[rates] refresco del día falló", err))
     .finally(() => {
       inFlight = null;
     });
@@ -52,25 +56,27 @@ export function useAutoRefreshRates() {
   const { user } = useSession();
   const userId = user?.id;
   const pathname = useRouterState({ select: (st) => st.location.pathname });
+  const sync = useSyncStatus();
 
-  // Entrada al sistema y cada cambio de pantalla.
-  useEffect(() => {
-    if (!hydrated || !userId) return;
-    refreshRates();
-  }, [hydrated, userId, pathname]);
+  // Con backend, esperar a tener los datos del servidor de esta carga (primer
+  // ciclo completo). Si no hay con qué sincronizar —build sin backend, sesión sin
+  // conexión, servidor caído— se decide con lo que haya en el equipo.
+  const ready =
+    !SYNC_ENABLED || !!sync.lastSyncAt || sync.phase === "offline" || !hasRemoteSession();
 
-  // Cada 5 min con la app a la vista, y al regresar a ella sin recarga ni
-  // navegación. En segundo plano no se consulta: al volver se pone al día.
   useEffect(() => {
-    if (!hydrated || !userId) return;
+    if (!hydrated || !userId || !ready) return;
+    refreshRatesOncePerDay();
+  }, [hydrated, userId, ready, pathname]);
+
+  // Al volver a la app (pestaña o PWA en primer plano): cubre el cambio de día
+  // con la app abierta desde ayer.
+  useEffect(() => {
+    if (!hydrated || !userId || !ready) return;
     const onVisible = () => {
-      if (document.visibilityState === "visible") refreshRates();
+      if (document.visibilityState === "visible") refreshRatesOncePerDay();
     };
-    const timer = setInterval(onVisible, REFRESH_EVERY_MS);
     document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [hydrated, userId]);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [hydrated, userId, ready]);
 }

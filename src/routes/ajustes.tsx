@@ -1462,12 +1462,12 @@ function Impresion() {
        `companyPriceRule` dejó de corregirlo en silencio a propósito, así que
        el error se para aquí, que es donde el usuario puede arreglarlo. */
     if (!Number.isFinite(f.coldCakeMin) || !Number.isFinite(f.coldCakeMax))
-      return toast.error("El mínimo y el máximo de tortas frías deben ser números");
+      return toast.error("El mínimo y el máximo del rango de precio deben ser números");
     if (f.coldCakeMin < 0 || f.coldCakeMax < 0)
-      return toast.error("El mínimo y el máximo de tortas frías no pueden ser negativos");
+      return toast.error("El mínimo y el máximo del rango de precio no pueden ser negativos");
     if (f.coldCakeMax < f.coldCakeMin)
       return toast.error(
-        `El máximo de tortas frías (${usd(f.coldCakeMax)}) no puede ser menor que el mínimo (${usd(f.coldCakeMin)})`,
+        `El máximo del rango (${usd(f.coldCakeMax)}) no puede ser menor que el mínimo (${usd(f.coldCakeMin)})`,
       );
 
     if (!prefijoValido)
@@ -1582,8 +1582,8 @@ function Impresion() {
           />
         </Field>
         <Field
-          label="Tortas frías · mínimo USD"
-          hint="Por debajo de esto, el genérico de tortas frías avisa que hay que subirlo."
+          label="Rango de precio · mínimo USD"
+          hint="Los productos sujetos al rango avisan cuando su precio queda por debajo de esto."
         >
           <Input
             className="num"
@@ -1600,8 +1600,8 @@ function Impresion() {
           />
         </Field>
         <Field
-          label="Tortas frías · máximo USD"
-          hint="El precio al que la alerta pide subirlo. No puede ser menor que el mínimo."
+          label="Rango de precio · máximo USD"
+          hint="El precio sugerido al corregir. No puede ser menor que el mínimo."
         >
           <Input
             className="num"

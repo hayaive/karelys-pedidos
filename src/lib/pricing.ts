@@ -123,9 +123,10 @@ export function priceOf(_s: AppState, p: Product, priceTypeId: ID | undefined) {
 /* ── Reglas y alertas de precio ───────────────────────── */
 
 /**
- * El **único** producto con banda/alerta: el genérico que reemplazó a los 13
- * sabores. "Brownie" y "Torta Quesillo" quedan libres de cualquier control a
- * propósito (su precio vive por encima), igual que el resto del catálogo.
+ * El genérico que reemplazó a los 13 sabores. Hasta 2026-09 era el **único**
+ * producto con banda/alerta; hoy la banda la decide `priceBand` en cada
+ * producto, y esto queda como respaldo para datos que aún no lo traen (ver
+ * `isPriceBanded`).
  *
  * Se identifica por id canónico y, si alguien lo recreó a mano, por código: son
  * las dos claves estables del catálogo.
@@ -148,9 +149,22 @@ export function companyPriceRule(s: AppState): PriceRule {
   };
 }
 
-/** Regla aplicable a un producto, o null si no tiene ninguna (todos menos uno). */
+/**
+ * ¿El precio de este producto está sujeto al rango de Ajustes? Lo decide el
+ * negocio con el switch del formulario de producto (`priceBand`).
+ *
+ * `undefined` no es "no": es un producto que todavía no pasó por un servidor
+ * que conozca el campo (o una instalación sin backend anterior a él). Ahí se
+ * conserva el comportamiento de antes —sólo el genérico de tortas frías—, para
+ * que su alerta no desaparezca mientras se actualiza el backend.
+ */
+export function isPriceBanded(p: Product) {
+  return p.priceBand ?? isGenericColdCake(p);
+}
+
+/** Regla aplicable a un producto, o null si no está sujeto al rango. */
 export function priceRuleOf(s: AppState, p: Product): PriceRule | null {
-  return isGenericColdCake(p) ? companyPriceRule(s) : null;
+  return isPriceBanded(p) ? companyPriceRule(s) : null;
 }
 
 /** "con la tasa de hoy" / "con la tasa del 12/09", para el texto de la alerta. */
@@ -184,7 +198,6 @@ export function priceAlertOf(
   priceTypeId: ID | undefined,
   money: Money,
 ): PriceAlert | null {
-  if (!isGenericColdCake(p)) return null;
   const rule = priceRuleOf(s, p);
   if (!rule) return null;
 
@@ -216,7 +229,7 @@ export function priceAlertOf(
       message:
         `${p.name} está en ${bsLabel(currentBs)} (≈ ${fmtUsd(currentUsd)} ${rateLabel(money)}); ` +
         `por debajo de ${fmtUsd(rule.minUsd)}. ` +
-        `Súbela a ${bsLabel(suggestedBs)} (≈ ${fmtUsd(rule.targetUsd)}).`,
+        `Precio sugerido: ${bsLabel(suggestedBs)} (≈ ${fmtUsd(rule.targetUsd)}).`,
     };
   }
 
@@ -236,9 +249,10 @@ export function priceAlertOf(
 }
 
 /**
- * Todas las alertas de precio bajo del catálogo. Hoy sólo puede haberlas de un
- * producto —el genérico de tortas frías— pero se recorre el catálogo igual para
- * que añadir otro con regla no obligue a tocar las pantallas.
+ * Todas las alertas de precio bajo del catálogo: una por cada producto activo
+ * sujeto al rango (`isPriceBanded`) cuyo precio quedó por debajo del mínimo.
+ * Pueden ser muchas a la vez —una subida de tasa baja el equivalente en USD de
+ * todos los precios en Bs— y por eso la pantalla las corrige en bloque.
  *
  * Un producto `bsOnly` produce **una sola** alerta: su precio es un único número
  * en Bs, no hay Mayor/Detal que distinguir.
@@ -250,7 +264,7 @@ export function priceAlerts(s: AppState): PriceAlert[] {
 
   for (const p of s.products) {
     if (!p.active) continue;
-    if (!isGenericColdCake(p)) continue;
+    if (!isPriceBanded(p)) continue;
 
     if (p.bsOnly) {
       const alert = priceAlertOf(s, p, undefined, money);

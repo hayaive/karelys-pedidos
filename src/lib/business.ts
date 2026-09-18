@@ -110,13 +110,32 @@ async function dolarApi(path: "dolares" | "euros"): Promise<DolarApiQuote[]> {
 }
 
 /**
- * Publica una tasa automática sólo si aporta algo: cambió el valor o la vigente
- * ya está vencida. Se consulta en cada cambio de pantalla, y publicar siempre
- * llenaría el log append-only de tasas (y la auditoría) con copias idénticas.
+ * ¿Ya hay tasa de esta fuente publicada hoy (automática o escrita a mano)?
+ * Es la marca de "ya se actualizó hoy" de la regla de una vez al día.
  */
-function publishAutomaticRate(source: RateSource, value: number | undefined) {
+export function hasRateToday(s: AppState, source: RateSource) {
+  const actual = currentRate(s, source);
+  return !!actual && dayKey(actual.createdAt) === dayKey();
+}
+
+/**
+ * Publica una tasa automática.
+ *
+ * - `oncePerDay` (el refresco automático al entrar): sólo si esa fuente no tiene
+ *   todavía tasa de hoy, y en ese caso **siempre** se publica aunque el valor sea
+ *   el mismo de ayer: esa publicación es la que marca el día como actualizado.
+ *   Una tasa que alguien editó a mano hoy cuenta igual, así que nunca se pisa.
+ * - Sin `oncePerDay` (el botón "Traer de API", un pedido explícito): sólo si
+ *   aporta algo —cambió el valor o la vigente venció—, para no llenar el log
+ *   append-only de tasas con copias idénticas.
+ */
+function publishAutomaticRate(source: RateSource, value: number | undefined, oncePerDay: boolean) {
   if (!value || !Number.isFinite(value)) return;
   const s = getState();
+  if (oncePerDay) {
+    if (!hasRateToday(s, source)) setRate(source, value, true);
+    return;
+  }
   const actual = currentRate(s, source);
   const maxAge = s.company.rateMaxAgeHours ?? DEFAULT_RATE_MAX_AGE_HOURS;
   const ageHours = actual ? (Date.now() - Date.parse(actual.createdAt)) / 3_600_000 : Infinity;
@@ -127,16 +146,19 @@ function publishAutomaticRate(source: RateSource, value: number | undefined) {
 /**
  * Trae BCV USD, paralelo y BCV EUR de dolarapi. Dólar y euro se consultan por
  * separado: si falla uno, el otro igual se actualiza. Si fallan ambos, el admin
- * las edita a mano.
+ * las edita a mano. `oncePerDay`: ver `publishAutomaticRate`.
  */
-export async function fetchRatesFromApi(): Promise<{ ok: boolean; message: string }> {
+export async function fetchRatesFromApi(
+  opts: { oncePerDay?: boolean } = {},
+): Promise<{ ok: boolean; message: string }> {
+  const once = opts.oncePerDay ?? false;
   const [dolares, euros] = await Promise.allSettled([dolarApi("dolares"), dolarApi("euros")]);
   const promedio = (r: PromiseSettledResult<DolarApiQuote[]>, fuente: string) =>
     r.status === "fulfilled" ? r.value.find((d) => d.fuente === fuente)?.promedio : undefined;
 
-  publishAutomaticRate("BCV_USD", promedio(dolares, "oficial"));
-  publishAutomaticRate("BINANCE", promedio(dolares, "paralelo"));
-  publishAutomaticRate("BCV_EUR", promedio(euros, "oficial"));
+  publishAutomaticRate("BCV_USD", promedio(dolares, "oficial"), once);
+  publishAutomaticRate("BINANCE", promedio(dolares, "paralelo"), once);
+  publishAutomaticRate("BCV_EUR", promedio(euros, "oficial"), once);
 
   if (dolares.status === "rejected" && euros.status === "rejected")
     return { ok: false, message: "No se pudo consultar la API. Edita las tasas manualmente." };
@@ -174,6 +196,12 @@ export function addMovement(
  * Aplica el movimiento al estado y devuelve el asiento creado (o `undefined` si el
  * producto no existe). **No encola**: quien lo llame decide si ese movimiento es un
  * hecho propio o el efecto de una venta.
+ *
+ * Regla del negocio: el stock nunca queda negativo, se recorta a 0. Por eso
+ * `base` parte del stock ya saneado (por si llegara negativo de datos viejos) y
+ * la salida sólo descuenta lo que en verdad hay (`−min(qty, base)`); vender sin
+ * inventario sigue permitido (`createSale` no bloquea), sólo dejamos de fingir
+ * una existencia negativa. El mismo criterio lo aplica el backend en paralelo.
  */
 export function applyMovement(
   s: AppState,
@@ -182,12 +210,16 @@ export function applyMovement(
   type: "entrada" | "salida" | "ajuste",
   reason: string,
   note?: string,
+  saleId?: ID,
 ): InventoryMovement | undefined {
   const p = s.products.find((x) => x.id === productId);
   if (!p) return undefined;
-  if (type === "entrada") p.stock += qty;
-  else if (type === "salida") p.stock -= qty;
-  else p.stock = qty;
+  const base = Math.max(p.stock, 0);
+  let delta: number;
+  if (type === "entrada") delta = qty;
+  else if (type === "salida") delta = -Math.min(qty, base);
+  else delta = qty - base;
+  p.stock = round3(base + delta);
   const movement: InventoryMovement = {
     id: newId(),
     productId,
@@ -197,10 +229,18 @@ export function applyMovement(
     note,
     userId: s.sessionUserId ?? "system",
     createdAt: new Date().toISOString(),
+    delta,
+    stockAfter: p.stock,
+    saleId,
   };
   s.movements.unshift(movement);
   logAudit("movimiento_inventario", "product", productId, { qty, type, reason });
   return movement;
+}
+
+/** Redondea a 3 decimales (kilos, etc.) para no arrastrar residuo de punto flotante. */
+function round3(n: number) {
+  return Math.round(n * 1000) / 1000;
 }
 
 /* ── Ventas ───────────────────────────────────────────── */
@@ -287,7 +327,8 @@ export function createSale(input: {
     st.sales.unshift(sale);
     for (const it of input.items) {
       const p = st.products.find((x) => x.id === it.productId);
-      if (p && !p.isCombo) applyMovement(st, it.productId, it.qty, "salida", "Salida por venta", number);
+      if (p && !p.isCombo)
+        applyMovement(st, it.productId, it.qty, "salida", "Salida por venta", number, sale!.id);
     }
     if (input.orderId) {
       const o = st.orders.find((x) => x.id === input.orderId);
@@ -319,7 +360,31 @@ export function cancelSale(saleId: ID, reason: string) {
     sale.status = "anulada";
     for (const it of sale.items) {
       const p = s.products.find((x) => x.id === it.productId);
-      if (p && !p.isCombo) applyMovement(s, it.productId, it.qty, "entrada", "Anulación de venta", sale.number);
+      if (!p || p.isCombo) continue;
+      /* Se devuelve lo que **realmente** se descontó, no `it.qty`: si la venta
+         recortó la salida por falta de existencia, devolver la cantidad vendida
+         dejaría el stock más alto del que había antes de vender. Se toma de los
+         movimientos de salida de esta venta (`−Σdelta`); se prefieren los que ya
+         sincronizaron con el servidor (traen `rev`) porque su `delta` es el que
+         el servidor realmente aplicó, y si ninguno sincronizó aún se usan los
+         locales. Sin movimientos no se devuelve nada: el stock del servidor
+         llega en el siguiente ciclo y converge solo. */
+      const outs = s.movements.filter(
+        (m) => m.saleId === saleId && m.productId === it.productId && m.type === "salida",
+      );
+      const synced = outs.filter((m) => m.rev !== undefined);
+      const source = synced.length ? synced : outs;
+      const returned = -source.reduce((a, m) => a + (m.delta ?? 0), 0);
+      if (returned > 0)
+        applyMovement(
+          s,
+          it.productId,
+          returned,
+          "entrada",
+          "Anulación de venta",
+          sale.number,
+          saleId,
+        );
     }
     logAudit("venta_anulada", "sale", saleId, { reason, number: sale.number });
     voided = true;

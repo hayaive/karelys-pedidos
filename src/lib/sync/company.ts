@@ -26,14 +26,23 @@ import { getSyncStatus, useSyncStatus } from "./engine";
 import { hasRemoteSession, isPairedWithBackend } from "./session";
 
 /**
- * Los únicos campos que Ajustes → Impresión y numeración puede mandar por
- * `PATCH /company`: los que declara `UpdateCompanyDto` en el backend.
- * `saleNext`/`orderNext` **no** están aquí a propósito: la numeración es
- * propiedad del servidor (el DTO tampoco los declara) y mandarlos no haría
- * nada salvo sugerir, con el tipo, que sí se puede.
+ * Los únicos campos que Ajustes puede mandar por `PATCH /company`: los que
+ * declara `UpdateCompanyDto` en el backend. `saleNext`/`orderNext` **no**
+ * están aquí a propósito: la numeración es propiedad del servidor (el DTO
+ * tampoco los declara) y mandarlos no haría nada salvo sugerir, con el tipo,
+ * que sí se puede.
+ *
+ * `name`/`logoUrl`/`phone`/`address`/`taxId` son los de Ajustes → Empresa;
+ * `shortcuts`, los de Ajustes → Atajos de teclado. Los demás son de
+ * Impresión y numeración.
  */
 export type PatchableCompanyFields = Pick<
   CompanySettings,
+  | "name"
+  | "logoUrl"
+  | "phone"
+  | "address"
+  | "taxId"
   | "ticketFooter"
   | "salePrefix"
   | "orderPrefix"
@@ -43,6 +52,7 @@ export type PatchableCompanyFields = Pick<
   | "productCodePrefix"
   | "productCodeDigits"
   | "productCodeStart"
+  | "shortcuts"
 >;
 
 /** Los tres campos que el backend puede no conocer todavía (ver `updateCompany`). */

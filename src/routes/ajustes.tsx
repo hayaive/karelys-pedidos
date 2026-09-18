@@ -28,6 +28,13 @@ import { getState, logAudit, mutate, resetDatabase, useAppState } from "@/lib/st
 import { categoryErrorText, createCategory, useCategoryAccess } from "@/lib/sync/categories";
 import { companyErrorText, updateCompany, useCompanyAccess } from "@/lib/sync/company";
 import {
+  createPaymentMethod,
+  deletePaymentMethod,
+  paymentMethodErrorText,
+  updatePaymentMethod,
+  usePaymentMethodAccess,
+} from "@/lib/sync/payment-methods";
+import {
   createPriceType,
   deletePriceType,
   priceTypeErrorText,
@@ -54,12 +61,16 @@ import {
   nextProductCode,
 } from "@/lib/catalog";
 import { uid } from "@/lib/seed";
+import { addMovement } from "@/lib/business";
+import { queueProductCreate, queueProductUpdate } from "@/lib/sync/mutations";
 import { dt, num, usd } from "@/lib/format";
 import {
   ALL_PERMISSIONS,
   type CompanySettings,
+  type PaymentMethod,
   type Permission,
   type PriceType,
+  type Product,
   type Role,
   type User,
 } from "@/lib/types";
@@ -155,31 +166,121 @@ function Ajustes() {
   );
 }
 
+/** Cotas de `UpdateCompanyDto` en el backend para los campos de esta pestaña. */
+const COMPANY_NAME_MAX = 160;
+const COMPANY_LOGO_MAX = 2000;
+const COMPANY_PHONE_MAX = 60;
+const COMPANY_ADDRESS_MAX = 500;
+const COMPANY_TAXID_MAX = 40;
+
 function Empresa() {
   const s = useAppState();
+  const acceso = useCompanyAccess();
   const [f, setF] = useState(s.company);
+  const [guardando, setGuardando] = useState(false);
+
+  const bloqueado = acceso.mode === "blocked" || guardando;
+
+  async function guardar() {
+    if (bloqueado) return;
+
+    const name = f.name.trim();
+    const phone = f.phone.trim();
+    const address = f.address.trim();
+    const taxId = f.taxId.trim();
+
+    if (!name) return toast.error("Completa el nombre de la empresa");
+    if (name.length > COMPANY_NAME_MAX)
+      return toast.error(`El nombre no puede pasar de ${COMPANY_NAME_MAX} caracteres`);
+    if (phone.length > COMPANY_PHONE_MAX)
+      return toast.error(`El teléfono no puede pasar de ${COMPANY_PHONE_MAX} caracteres`);
+    if (address.length > COMPANY_ADDRESS_MAX)
+      return toast.error(`La dirección no puede pasar de ${COMPANY_ADDRESS_MAX} caracteres`);
+    if (taxId.length > COMPANY_TAXID_MAX)
+      return toast.error(`El RIF no puede pasar de ${COMPANY_TAXID_MAX} caracteres`);
+    // El logo se guarda como data URI (base64): con backend, `UpdateCompanyDto`
+    // sólo admite hasta `COMPANY_LOGO_MAX` caracteres, y una foto real casi
+    // siempre lo pasa. Mejor este aviso ahora que un 400 opaco al guardar.
+    if (acceso.mode !== "local" && f.logoUrl.length > COMPANY_LOGO_MAX) {
+      return toast.error("El logo es demasiado pesado para guardarlo en el servidor", {
+        description: `Usa una imagen más pequeña o de menor calidad: el límite son unos ${COMPANY_LOGO_MAX} caracteres codificados.`,
+      });
+    }
+
+    const normalizado: CompanySettings = { ...f, name, phone, address, taxId };
+    const patch = diffCompanyFields(s.company, normalizado);
+    if (!Object.keys(patch).length) {
+      setF(normalizado);
+      toast.success("Configuración guardada");
+      return;
+    }
+
+    setGuardando(true);
+    try {
+      const result = await updateCompany(patch);
+      setF(result.company);
+      toast.success("Configuración guardada");
+    } catch (err) {
+      toast.error("No se pudo guardar la configuración", { description: companyErrorText(err) });
+    } finally {
+      setGuardando(false);
+    }
+  }
+
   return (
     <Card className="max-w-4xl">
       <CardHead
         title="Configuración de empresa"
         sub="Karelys Delicias es la marca principal del sistema"
       />
+      {acceso.mode === "blocked" && (
+        <div className="px-4 pt-4">
+          <Aviso tone="amber" icon={IcoAlerta}>
+            {acceso.reason}
+          </Aviso>
+        </div>
+      )}
       <div className="grid gap-3 p-4 sm:grid-cols-2">
         <Field label="Nombre">
-          <Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
+          <Input
+            value={f.name}
+            disabled={bloqueado}
+            maxLength={COMPANY_NAME_MAX}
+            onChange={(e) => setF({ ...f, name: e.target.value })}
+          />
         </Field>
         <Field label="Teléfono">
-          <Input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} />
+          <Input
+            value={f.phone}
+            disabled={bloqueado}
+            maxLength={COMPANY_PHONE_MAX}
+            onChange={(e) => setF({ ...f, phone: e.target.value })}
+          />
         </Field>
         <Field label="Dirección">
-          <Input value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} />
+          <Input
+            value={f.address}
+            disabled={bloqueado}
+            maxLength={COMPANY_ADDRESS_MAX}
+            onChange={(e) => setF({ ...f, address: e.target.value })}
+          />
         </Field>
         <Field label="Datos fiscales (RIF)">
-          <Input value={f.taxId} onChange={(e) => setF({ ...f, taxId: e.target.value })} />
+          <Input
+            value={f.taxId}
+            disabled={bloqueado}
+            maxLength={COMPANY_TAXID_MAX}
+            onChange={(e) => setF({ ...f, taxId: e.target.value })}
+          />
         </Field>
         <Field label="Logo del negocio">
           <div className="flex items-center gap-3">
-            <label className="flex h-20 w-20 cursor-pointer items-center justify-center overflow-hidden rounded-lg border-2 border-dashed border-linea bg-sup-2 text-center text-[11px] leading-tight text-texto-3 transition-colors hover:border-sol hover:text-sol">
+            <label
+              className={
+                "flex h-20 w-20 cursor-pointer items-center justify-center overflow-hidden rounded-lg border-2 border-dashed border-linea bg-sup-2 text-center text-[11px] leading-tight text-texto-3 transition-colors hover:border-sol hover:text-sol" +
+                (bloqueado ? " pointer-events-none opacity-60" : "")
+              }
+            >
               {f.logoUrl ? (
                 <img src={f.logoUrl} alt="Logo" className="size-full object-cover" />
               ) : (
@@ -193,6 +294,7 @@ function Empresa() {
                 type="file"
                 accept="image/*"
                 className="hidden"
+                disabled={bloqueado}
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (!file) return;
@@ -207,7 +309,7 @@ function Empresa() {
                 PNG o JPG. Se mostrará en el login, el menú y el ticket.
               </p>
               {f.logoUrl && (
-                <Btn size="sm" onClick={() => setF({ ...f, logoUrl: "" })}>
+                <Btn size="sm" disabled={bloqueado} onClick={() => setF({ ...f, logoUrl: "" })}>
                   Quitar logo
                 </Btn>
               )}
@@ -217,13 +319,10 @@ function Empresa() {
         <div className="sm:col-span-2">
           <Btn
             variant="amber"
-            onClick={() => {
-              mutate((st) => {
-                st.company = { ...st.company, ...f };
-                logAudit("empresa_actualizada", "company", "company");
-              });
-              toast.success("Configuración guardada");
-            }}
+            cargando={guardando}
+            disabled={bloqueado}
+            title={acceso.mode === "blocked" ? acceso.reason : undefined}
+            onClick={() => void guardar()}
           >
             Guardar
           </Btn>
@@ -1032,68 +1131,252 @@ function FilaPrecio({
   );
 }
 
+/** Tope de `name` en `CreatePaymentMethodDto` / `UpdatePaymentMethodDto` (ver payment-methods.ts). */
+const PAYMENT_METHOD_NAME_MAX = 80;
+
 function Pagos() {
   const s = useAppState();
-  const [f, setF] = useState({ name: "", currency: "USD", ref: "no" });
+  const acceso = usePaymentMethodAccess();
+  const [f, setF] = useState<{ name: string; currency: "USD" | "BS"; ref: string }>({
+    name: "",
+    currency: "USD",
+    ref: "no",
+  });
+  const [creando, setCreando] = useState(false);
+  const [del, setDel] = useState<PaymentMethod | null>(null);
+  const [borrando, setBorrando] = useState(false);
+
+  const bloqueado = acceso.mode === "blocked";
+  const motivo = acceso.mode === "blocked" ? acceso.reason : undefined;
+
+  async function agregar() {
+    if (bloqueado || creando) return;
+    if (!f.name.trim()) return toast.error("Completa el nombre");
+    setCreando(true);
+    try {
+      await createPaymentMethod({
+        name: f.name.trim(),
+        currency: f.currency,
+        requiresReference: f.ref === "si",
+      });
+      setF({ name: "", currency: "USD", ref: "no" });
+      toast.success("Forma de pago agregada");
+    } catch (err) {
+      toast.error("No se pudo agregar la forma de pago", {
+        description: paymentMethodErrorText(err),
+      });
+    } finally {
+      setCreando(false);
+    }
+  }
+
+  async function eliminar() {
+    if (!del || borrando) return;
+    setBorrando(true);
+    try {
+      await deletePaymentMethod(del.id);
+      toast.success("Forma de pago eliminada");
+      setDel(null);
+    } catch (err) {
+      toast.error("No se pudo eliminar la forma de pago", {
+        description: paymentMethodErrorText(err),
+      });
+    } finally {
+      setBorrando(false);
+    }
+  }
+
   return (
     <Card className="max-w-2xl">
       <CardHead title="Métodos de pago" />
+      {acceso.mode === "blocked" && (
+        <div className="px-4 pt-4">
+          <Aviso tone="amber" icon={IcoAlerta}>
+            {acceso.reason}
+          </Aviso>
+        </div>
+      )}
       <div className="grid gap-2 border-b border-border p-3 sm:grid-cols-4">
         <Input
           placeholder="Nombre"
           value={f.name}
+          disabled={bloqueado || creando}
+          maxLength={PAYMENT_METHOD_NAME_MAX}
           onChange={(e) => setF({ ...f, name: e.target.value })}
         />
-        <Select value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value })}>
+        <Select
+          value={f.currency}
+          disabled={bloqueado || creando}
+          onChange={(e) => setF({ ...f, currency: e.target.value as "USD" | "BS" })}
+        >
           <option value="USD">USD</option>
           <option value="BS">Bolívares</option>
         </Select>
-        <Select value={f.ref} onChange={(e) => setF({ ...f, ref: e.target.value })}>
+        <Select
+          value={f.ref}
+          disabled={bloqueado || creando}
+          onChange={(e) => setF({ ...f, ref: e.target.value })}
+        >
           <option value="no">Sin referencia</option>
           <option value="si">Requiere referencia</option>
         </Select>
         <Btn
           variant="amber"
-          onClick={() => {
-            if (!f.name.trim()) return;
-            mutate((st) =>
-              st.paymentMethods.push({
-                id: uid(),
-                name: f.name.trim(),
-                currency: f.currency as "USD" | "BS",
-                requiresReference: f.ref === "si",
-                active: true,
-              }),
-            );
-            setF({ name: "", currency: "USD", ref: "no" });
-            toast.success("Método agregado");
-          }}
+          cargando={creando}
+          disabled={bloqueado}
+          title={motivo}
+          onClick={() => void agregar()}
         >
           Agregar
         </Btn>
       </div>
       <div className="divide-y divide-border">
         {s.paymentMethods.map((m) => (
-          <div key={m.id} className="flex items-center gap-3 px-4 py-2.5 text-sm">
-            <span className="flex-1">{m.name}</span>
-            <Badge>{m.currency === "USD" ? "USD" : "Bs"}</Badge>
-            {m.requiresReference && <Badge tone="amber">Referencia</Badge>}
-            <Btn
-              size="sm"
-              variant="ghost"
-              onClick={() =>
-                mutate((st) => {
-                  const pm = st.paymentMethods.find((x) => x.id === m.id)!;
-                  pm.active = !pm.active;
-                })
-              }
-            >
-              {m.active ? "Desactivar" : "Activar"}
-            </Btn>
-          </div>
+          <FilaPago
+            key={m.id}
+            m={m}
+            bloqueado={bloqueado}
+            motivo={motivo}
+            onDelete={() => setDel(m)}
+          />
         ))}
       </div>
+
+      <ConfirmDialog
+        open={!!del}
+        danger
+        title="Eliminar forma de pago"
+        message={`¿Eliminar "${del?.name}"? Si tiene ventas o pedidos con esta forma de pago, el servidor pedirá desactivarla en vez de eliminarla.`}
+        onCancel={() => (borrando ? null : setDel(null))}
+        onConfirm={() => void eliminar()}
+      />
     </Card>
+  );
+}
+
+function FilaPago({
+  m,
+  bloqueado,
+  motivo,
+  onDelete,
+}: {
+  m: PaymentMethod;
+  bloqueado: boolean;
+  motivo?: string;
+  onDelete: () => void;
+}) {
+  const [name, setName] = useState(m.name);
+  /** El nombre que trajo el estado la última vez que se sincronizó con el input. */
+  const [adoptado, setAdoptado] = useState(m.name);
+  const [guardando, setGuardando] = useState(false);
+  const [alternando, setAlternando] = useState(false);
+
+  // El nombre cambió en el estado (lo renombró otro equipo y llegó por sync, o
+  // acabó de confirmarlo el servidor): el input adopta el valor autoritativo en
+  // lugar de quedarse enseñando uno viejo.
+  if (adoptado !== m.name) {
+    setAdoptado(m.name);
+    setName(m.name);
+  }
+
+  const ocupado = guardando || alternando;
+
+  async function guardarNombre() {
+    const limpio = name.trim();
+    if (ocupado || limpio === m.name) {
+      setName(m.name);
+      return;
+    }
+    if (!limpio) {
+      setName(m.name);
+      toast.error("La forma de pago necesita un nombre");
+      return;
+    }
+    if (bloqueado) {
+      setName(m.name);
+      toast.error("No se pudo renombrar la forma de pago", { description: motivo });
+      return;
+    }
+    setGuardando(true);
+    try {
+      await updatePaymentMethod(m.id, { name: limpio });
+      toast.success("Forma de pago actualizada");
+    } catch (err) {
+      setName(m.name);
+      toast.error("No se pudo renombrar la forma de pago", {
+        description: paymentMethodErrorText(err),
+      });
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  async function alternarReferencia() {
+    if (ocupado || bloqueado) return;
+    setAlternando(true);
+    try {
+      await updatePaymentMethod(m.id, { requiresReference: !m.requiresReference });
+    } catch (err) {
+      toast.error("No se pudo cambiar la referencia", { description: paymentMethodErrorText(err) });
+    } finally {
+      setAlternando(false);
+    }
+  }
+
+  async function alternarActivo() {
+    if (ocupado || bloqueado) return;
+    setAlternando(true);
+    try {
+      await updatePaymentMethod(m.id, { active: !m.active });
+    } catch (err) {
+      toast.error("No se pudo cambiar el estado", { description: paymentMethodErrorText(err) });
+    } finally {
+      setAlternando(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 text-sm">
+      <input
+        value={name}
+        maxLength={PAYMENT_METHOD_NAME_MAX}
+        disabled={bloqueado || ocupado}
+        title={motivo}
+        aria-label={`Nombre de la forma de pago ${m.name}`}
+        onChange={(e) => setName(e.target.value)}
+        onBlur={() => void guardarNombre()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") setName(m.name);
+        }}
+        className="flex-1 bg-transparent text-sm outline-none disabled:cursor-not-allowed disabled:opacity-60"
+      />
+      <Badge>{m.currency === "USD" ? "USD" : "Bs"}</Badge>
+      {!m.active && <Badge tone="amber">Inactivo</Badge>}
+      <Btn
+        size="sm"
+        variant="ghost"
+        disabled={bloqueado}
+        cargando={alternando}
+        title={motivo}
+        onClick={() => void alternarReferencia()}
+      >
+        {m.requiresReference ? "Referencia: sí" : "Referencia: no"}
+      </Btn>
+      <Btn
+        size="sm"
+        variant="ghost"
+        disabled={bloqueado}
+        cargando={alternando}
+        title={motivo}
+        onClick={() => void alternarActivo()}
+      >
+        {m.active ? "Desactivar" : "Activar"}
+      </Btn>
+      <Btn size="sm" variant="ghost" disabled={bloqueado} title={motivo} onClick={onDelete}>
+        Eliminar
+      </Btn>
+    </div>
   );
 }
 
@@ -1105,9 +1388,21 @@ function Pagos() {
  */
 const PRODUCT_CODE_PREFIX_RE = /^[A-Z]([A-Z0-9-]{0,6}[A-Z-])?$/;
 
-/** Los únicos campos que `PATCH /company` acepta desde esta pestaña, y sólo los que cambiaron. */
+/**
+ * Los únicos campos que `PATCH /company` acepta, y sólo los que cambiaron. La
+ * usan tanto Empresa como Impresión y numeración (y Atajos, sólo con
+ * `shortcuts`): mismo patrón de "no mandar lo que el admin no tocó" en las
+ * tres pestañas.
+ */
 function diffCompanyFields(base: CompanySettings, form: CompanySettings): Partial<CompanySettings> {
   const patch: Partial<CompanySettings> = {};
+  if (form.name !== base.name) patch.name = form.name;
+  if (form.logoUrl !== base.logoUrl) patch.logoUrl = form.logoUrl;
+  if (form.phone !== base.phone) patch.phone = form.phone;
+  if (form.address !== base.address) patch.address = form.address;
+  if (form.taxId !== base.taxId) patch.taxId = form.taxId;
+  if (JSON.stringify(form.shortcuts ?? {}) !== JSON.stringify(base.shortcuts ?? {}))
+    patch.shortcuts = form.shortcuts;
   if (form.ticketFooter !== base.ticketFooter) patch.ticketFooter = form.ticketFooter;
   if (form.salePrefix !== base.salePrefix) patch.salePrefix = form.salePrefix;
   if (form.orderPrefix !== base.orderPrefix) patch.orderPrefix = form.orderPrefix;
@@ -1409,8 +1704,17 @@ function Datos() {
    * se pueden crear, no se importa nada: es preferible a dejar productos apuntando
    * a una categoría que el servidor no conoce.
    *
-   * Los productos siguen yendo a local tal cual estaban (esta pantalla no los
-   * encola; ver el informe de esta tarea).
+   * Los productos, en cambio, **sí van encolados**: mismo camino que usa
+   * `ProductForm` en inventario.tsx (`queueProductCreate`/`queueProductUpdate` de
+   * `lib/sync/mutations`, con el stock inicial como `movement.create` de tipo
+   * `ajuste`), no `POST /admin/import`. Se prefiere la cola porque es incremental
+   * —esta pantalla se usa para altas sueltas mientras el negocio funciona, no
+   * para la migración inicial del catálogo completo que es lo que documenta
+   * `AdminService.importState`— y porque reutiliza la validación y el contrato
+   * que ya prueba el formulario de producto, en vez de duplicarlos. `stock` de un
+   * producto que **ya existe** no se toca (igual que antes de esta tarea): una
+   * fila de CSV reimportada no debe pisar la existencia real con una columna que
+   * puede estar desactualizada; sólo un producto nuevo asienta su stock inicial.
    */
   async function importarCsv(text: string) {
     const rows = text
@@ -1455,10 +1759,19 @@ function Datos() {
       }
     }
 
-    let count = 0;
+    // Códigos retirados: igual que en `ProductForm`, un producto **nuevo** con un
+    // código retirado es un rechazo permanente del servidor (`product.create`
+    // sale de la cola y el producto se queda sólo en este navegador), así que se
+    // ataja aquí en vez de encolarlo para que falle después.
+    const retirados = new Set(getState().retiredProductCodes ?? []);
+
     let omitidas = 0;
+    let retiradas = 0;
+    const creados: Product[] = [];
+    const editados: Product[] = [];
     mutate((st) => {
-      for (const [code, name, category, mayor, detal, stock] of rows) {
+      for (const [rawCode, name, category, mayor, detal, stock] of rows) {
+        const code = rawCode.trim().toUpperCase();
         const cat = st.categories.find((c) => clave(c.name.trim()) === clave(nombreCat(category)));
         // No debería pasar (se acaban de crear), y si pasa la fila se omite: un
         // producto con un `categoryId` inexistente es justo lo que se evita.
@@ -1466,17 +1779,22 @@ function Datos() {
           omitidas++;
           continue;
         }
-        const existing = st.products.find((p) => p.code === code.trim());
         const prices = st.priceTypes.map((pt, i) => ({
           priceTypeId: pt.id,
           amount: parseFloat((i === 0 ? mayor : detal) || mayor || "0") || 0,
         }));
+        const existing = st.products.find((p) => p.code === code);
         if (existing) {
           Object.assign(existing, { name: name.trim(), categoryId: cat.id, prices });
+          editados.push(existing);
         } else {
-          const nuevo = {
+          if (retirados.has(code)) {
+            retiradas++;
+            continue;
+          }
+          const nuevo: Product = {
             id: uid(),
-            code: code.trim(),
+            code,
             name: name.trim(),
             categoryId: cat.id,
             stock: parseFloat(stock || "0") || 0,
@@ -1486,13 +1804,39 @@ function Datos() {
             createdAt: new Date().toISOString(),
           };
           st.products.push(nuevo);
+          creados.push(nuevo);
         }
-        count++;
       }
-      logAudit("importacion_productos", "product", "csv", { count });
+      logAudit("importacion_productos", "product", "csv", {
+        creados: creados.length,
+        editados: editados.length,
+      });
     });
 
+    // Encolar va **después** del `mutate`, con el producto ya en su forma final,
+    // y en este orden: la cola se aplica en secuencia en el servidor, así que el
+    // producto existe allí antes del movimiento que le fija la existencia (mismo
+    // comentario que `ProductForm`).
+    for (const p of creados) {
+      queueProductCreate(p);
+      if (p.stock > 0) {
+        addMovement(
+          p.id,
+          p.stock,
+          "ajuste",
+          "Stock inicial",
+          "Existencia declarada al importar el CSV de productos",
+        );
+      }
+    }
+    for (const p of editados) {
+      queueProductUpdate(p.id, { name: p.name, categoryId: p.categoryId, prices: p.prices });
+    }
+
+    const count = creados.length + editados.length;
     toast.success(`${count} productos importados`);
+    if (retiradas)
+      toast.warning(`${retiradas} filas omitidas: su código de producto está retirado`);
     if (omitidas) toast.warning(`${omitidas} filas omitidas: su categoría no existe`);
   }
 

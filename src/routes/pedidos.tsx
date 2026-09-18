@@ -231,7 +231,11 @@ function Pedidos() {
                   {o.items.length > 4 && <li>+{o.items.length - 4} más</li>}
                 </ul>
                 {o.note && (
-                  <p className="mt-2 rounded bg-sol-vela px-2 py-1 text-xs text-sol-70">{o.note}</p>
+                  // `whitespace-pre-line`: la nota se escribe con saltos de línea y
+                  // tiene que leerse igual que se escribió.
+                  <p className="mt-2 whitespace-pre-line break-words rounded bg-sol-vela px-2 py-1.5 text-sm font-bold text-sol-70">
+                    {o.note}
+                  </p>
                 )}
                 <p className="mt-3">
                   <span className="num block text-lg font-semibold">

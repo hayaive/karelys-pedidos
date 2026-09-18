@@ -27,7 +27,8 @@ type TicketProps = { sale: Sale; order?: never } | { order: Order; sale?: never 
  * El bolívar es el único monto que se imprime (es lo que el cliente paga):
  * no lleva ninguna referencia en dólares, ni por línea ni en los totales,
  * abonos, pagos o vuelto. La nota del pedido/venta (`order.note`/`sale.note`),
- * si existe, se imprime igual que en la lista de pedidos.
+ * si existe, se imprime al final (justo antes de "Powered by") respetando sus
+ * saltos de línea.
  */
 export function TicketPreview(props: TicketProps) {
   const s = useAppState();
@@ -70,16 +71,12 @@ export function TicketPreview(props: TicketProps) {
             No es factura de venta
           </div>
         ) : null}
-        <p>{order ? "PEDIDO" : "VENTA"}: {order ? order.number : sale!.number}</p>
+        <p>
+          {order ? "PEDIDO" : "VENTA"}: {order ? order.number : sale!.number}
+        </p>
         <p>FECHA: {dt(order ? order.createdAt : sale!.createdAt)}</p>
         <p>CLIENTE: {order ? order.customerName : sale!.customerName}</p>
         <p>CAJERO: {cashierName}</p>
-        {note && (
-          <p className="mt-1 border border-black px-1 py-1 text-[9px]">
-            <span className="font-bold uppercase">Nota: </span>
-            {note}
-          </p>
-        )}
         <Sep />
         {items.map((i, k) => {
           const unit = i.bsOnly ? (i.unitPriceBs ?? 0) : unitBs(i, money);
@@ -107,7 +104,8 @@ export function TicketPreview(props: TicketProps) {
               <>
                 <p>ABONOS:</p>
                 {balance.deposits.map((d, k) => {
-                  const primary = d.currency === "USD" ? money.fmtBs(d.amount) : money.fmtBsAmount(d.amount);
+                  const primary =
+                    d.currency === "USD" ? money.fmtBs(d.amount) : money.fmtBsAmount(d.amount);
                   return (
                     <div key={k} className="mb-0.5">
                       <Row l={d.methodName + (d.reference ? " #" + d.reference : "")} r={primary} />
@@ -134,7 +132,8 @@ export function TicketPreview(props: TicketProps) {
             <Sep />
             <p>PAGOS:</p>
             {sale!.payments.map((p, k) => {
-              const primary = p.currency === "USD" ? money.fmtBs(p.amount) : money.fmtBsAmount(p.amount);
+              const primary =
+                p.currency === "USD" ? money.fmtBs(p.amount) : money.fmtBsAmount(p.amount);
               return (
                 <div key={k} className="mb-0.5">
                   <Row l={p.methodName + (p.reference ? " #" + p.reference : "")} r={primary} />
@@ -145,8 +144,19 @@ export function TicketPreview(props: TicketProps) {
               <Row l="VUELTO" r={money.fmtBs(sale!.changeUsd ?? 0)} bold />
             )}
             <Sep />
-            <p className="py-1 text-center text-[11px] font-bold uppercase">{s.company.ticketFooter}</p>
+            <p className="py-1 text-center text-[11px] font-bold uppercase">
+              {s.company.ticketFooter}
+            </p>
           </>
+        )}
+        {/* La nota va siempre al final, justo antes de "Powered by", y con sus
+            saltos de línea tal como se escribieron. */}
+        {note && (
+          <p className="my-1 whitespace-pre-line break-words border border-black px-1 py-1 text-[10px]">
+            <span className="font-bold uppercase">Nota:</span>
+            {"\n"}
+            {note}
+          </p>
         )}
         <p className="text-center text-[8px]">Powered by HAYAI</p>
       </div>

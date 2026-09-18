@@ -36,6 +36,18 @@ import {
   usePriceTypeAccess,
 } from "@/lib/sync/price-types";
 import {
+  createRole,
+  createUser,
+  deleteRole,
+  deleteUser,
+  setUserPassword,
+  updateRole,
+  updateUser,
+  userErrorText,
+  useUserAccess,
+  type UserAccess,
+} from "@/lib/sync/users";
+import {
   DEFAULT_PRODUCT_CODE_DIGITS,
   DEFAULT_PRODUCT_CODE_PREFIX,
   DEFAULT_PRODUCT_CODE_START,
@@ -48,6 +60,7 @@ import {
   type CompanySettings,
   type Permission,
   type PriceType,
+  type Role,
   type User,
 } from "@/lib/types";
 import { useSession } from "@/lib/auth";
@@ -220,13 +233,30 @@ function Empresa() {
   );
 }
 
+/** Formulario del modal de alta/edición de usuario. `id` ausente ⇒ alta. */
+interface UserForm {
+  id?: string;
+  username: string;
+  fullName: string;
+  email: string;
+  password: string;
+  roleId: string;
+  active: boolean;
+}
+
+const USERNAME_FORM_RE = /^[a-zA-Z0-9._-]+$/;
+
 function Usuarios() {
   const s = useAppState();
-  const { can } = useSession();
-  const [edit, setEdit] = useState<Partial<User> | null>(null);
+  const { can, user: sessionUser } = useSession();
+  const acceso = useUserAccess();
+  const [edit, setEdit] = useState<UserForm | null>(null);
+  const [guardandoUsuario, setGuardandoUsuario] = useState(false);
   const [del, setDel] = useState<User | null>(null);
-  const [roleEdit, setRoleEdit] = useState<string | null>(null);
-  const [roleDel, setRoleDel] = useState<string | null>(null);
+  const [roleAbierto, setRoleAbierto] = useState<string | null>(null);
+  const [roleDel, setRoleDel] = useState<Role | null>(null);
+  const [borrandoRol, setBorrandoRol] = useState(false);
+  const [creandoRol, setCreandoRol] = useState(false);
 
   if (!can("manage_users"))
     return (
@@ -235,44 +265,167 @@ function Usuarios() {
       </Card>
     );
 
+  const bloqueado = acceso.mode === "blocked";
+  const motivo = acceso.mode === "blocked" ? acceso.reason : undefined;
+  // Sólo una build sin backend gestiona usuarios de verdad en local; con
+  // backend (remoto o momentáneamente bloqueado) "eliminar" no existe: el
+  // servidor no tiene `DELETE /users`, sólo desactivar.
+  const hayBackend = acceso.mode !== "local";
+
+  function abrirNuevo() {
+    if (bloqueado) return;
+    setEdit({
+      username: "",
+      fullName: "",
+      email: "",
+      password: "",
+      roleId: s.roles[0]?.id ?? "",
+      active: true,
+    });
+  }
+
+  function abrirEditar(u: User) {
+    setEdit({
+      id: u.id,
+      username: u.username,
+      fullName: u.fullName,
+      email: u.email ?? "",
+      password: "",
+      roleId: u.roleId,
+      active: u.active,
+    });
+  }
+
+  async function guardarUsuario() {
+    if (!edit || guardandoUsuario) return;
+
+    const username = edit.username.trim();
+    const fullName = edit.fullName.trim();
+    const email = edit.email.trim();
+    const password = edit.password.trim();
+
+    if (!username) return toast.error("Completa el usuario");
+    if (username.length > 40) return toast.error("El usuario no puede pasar de 40 caracteres");
+    if (!USERNAME_FORM_RE.test(username))
+      return toast.error("El usuario sólo admite letras, números, punto, guion y guion bajo");
+    if (!fullName) return toast.error("Completa el nombre completo");
+    if (fullName.length > 120) return toast.error("El nombre no puede pasar de 120 caracteres");
+    if (!edit.roleId || !s.roles.some((r) => r.id === edit.roleId))
+      return toast.error("Selecciona un rol válido");
+    if (!edit.id && !password) return toast.error("Define una contraseña");
+    if (password && password.length < 10)
+      return toast.error("La contraseña necesita al menos 10 caracteres");
+    if (bloqueado) return toast.error("No se pudo guardar el usuario", { description: motivo });
+
+    setGuardandoUsuario(true);
+    try {
+      if (edit.id) {
+        await updateUser(edit.id, {
+          fullName,
+          email,
+          roleId: edit.roleId,
+          active: edit.active,
+        });
+        if (password) {
+          try {
+            await setUserPassword(edit.id, password);
+          } catch (err) {
+            toast.error("El usuario se guardó, pero no se pudo cambiar la contraseña", {
+              description: userErrorText(err),
+            });
+            setEdit(null);
+            return;
+          }
+        }
+        toast.success("Usuario actualizado");
+      } else {
+        await createUser({
+          username,
+          fullName,
+          email,
+          password,
+          roleId: edit.roleId,
+          active: edit.active,
+        });
+        toast.success("Usuario creado");
+      }
+      setEdit(null);
+    } catch (err) {
+      toast.error(edit.id ? "No se pudo actualizar el usuario" : "No se pudo crear el usuario", {
+        description: userErrorText(err),
+      });
+    } finally {
+      setGuardandoUsuario(false);
+    }
+  }
+
+  async function agregarRol() {
+    if (bloqueado || creandoRol) return;
+    setCreandoRol(true);
+    try {
+      const r = await createRole({ name: "Nuevo rol", permissions: [] });
+      toast.success(`Rol "${r.name}" creado`);
+    } catch (err) {
+      toast.error("No se pudo crear el rol", { description: userErrorText(err) });
+    } finally {
+      setCreandoRol(false);
+    }
+  }
+
+  function pedirEliminarRol(r: Role) {
+    if (bloqueado || r.system) return;
+    const usados = s.users.filter((u) => u.roleId === r.id).length;
+    if (usados > 0) {
+      toast.error(`Hay ${usados} usuario(s) con este rol. Cámbialos primero.`);
+      return;
+    }
+    setRoleDel(r);
+  }
+
+  async function confirmarEliminarRol() {
+    if (!roleDel || borrandoRol) return;
+    setBorrandoRol(true);
+    try {
+      await deleteRole(roleDel.id);
+      toast.success("Rol eliminado");
+      setRoleDel(null);
+    } catch (err) {
+      toast.error("No se pudo eliminar el rol", { description: userErrorText(err) });
+    } finally {
+      setBorrandoRol(false);
+    }
+  }
+
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Card>
         <CardHead
           title="Usuarios"
           action={
-            <Btn
-              size="sm"
-              variant="amber"
-              onClick={() =>
-                setEdit({ username: "", fullName: "", roleId: s.roles[0].id, active: true })
-              }
-            >
+            <Btn size="sm" variant="amber" disabled={bloqueado} title={motivo} onClick={abrirNuevo}>
               Nuevo
             </Btn>
           }
         />
+        {motivo && (
+          <div className="px-3 pt-3">
+            <Aviso tone="amber" icon={IcoAlerta}>
+              {motivo}
+            </Aviso>
+          </div>
+        )}
         <div className="divide-y divide-border">
           {s.users.map((u) => (
-            <div key={u.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5">
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium">{u.fullName}</p>
-                <p className="num text-xs text-muted-foreground">
-                  {u.username} · {s.roles.find((r) => r.id === u.roleId)?.name}
-                </p>
-              </div>
-              <Badge tone={u.active ? "green" : "neutral"}>
-                {u.active ? "Activo" : "Inactivo"}
-              </Badge>
-              <Btn size="sm" onClick={() => setEdit(u)}>
-                Editar
-              </Btn>
-              {u.username !== "admin" && (
-                <Btn size="sm" variant="ghost" onClick={() => setDel(u)}>
-                  Eliminar
-                </Btn>
-              )}
-            </div>
+            <FilaUsuario
+              key={u.id}
+              u={u}
+              roles={s.roles}
+              acceso={acceso}
+              hayBackend={hayBackend}
+              protegido={u.username === "admin" || u.id === sessionUser?.id}
+              onEdit={() => abrirEditar(u)}
+              onDelete={() => setDel(u)}
+            />
           ))}
         </div>
       </Card>
@@ -283,11 +436,10 @@ function Usuarios() {
           action={
             <Btn
               size="sm"
-              onClick={() =>
-                mutate((st) => {
-                  st.roles.push({ id: uid(), name: "Nuevo rol", permissions: [] });
-                })
-              }
+              disabled={bloqueado}
+              cargando={creandoRol}
+              title={motivo}
+              onClick={() => void agregarRol()}
             >
               Nuevo rol
             </Btn>
@@ -295,70 +447,15 @@ function Usuarios() {
         />
         <div className="divide-y divide-border">
           {s.roles.map((r) => (
-            <div key={r.id} className="px-4 py-2.5">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
-                <input
-                  defaultValue={r.name}
-                  onBlur={(e) =>
-                    mutate((st) => {
-                      const role = st.roles.find((x) => x.id === r.id);
-                      if (role) role.name = e.target.value;
-                    })
-                  }
-                  className="min-w-[8rem] flex-1 bg-transparent text-sm font-medium outline-none"
-                />
-                <span className="num text-xs text-muted-foreground">
-                  {r.permissions.length} permisos
-                </span>
-                <Btn
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setRoleEdit(roleEdit === r.id ? null : r.id)}
-                >
-                  {roleEdit === r.id ? "Cerrar" : "Permisos"}
-                </Btn>
-                <Btn
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    if (r.id === "role-admin") {
-                      toast.error("El rol Administrador no se puede eliminar");
-                      return;
-                    }
-                    const used = s.users.filter((u) => u.roleId === r.id).length;
-                    if (used > 0) {
-                      toast.error(`Hay ${used} usuario(s) con este rol. Cámbialos primero.`);
-                      return;
-                    }
-                    setRoleDel(r.id);
-                  }}
-                >
-                  Eliminar
-                </Btn>
-              </div>
-              {roleEdit === r.id && (
-                <div className="mt-2 grid grid-cols-2 gap-1">
-                  {ALL_PERMISSIONS.map((p) => (
-                    <label key={p.key} className="flex items-center gap-2 text-xs">
-                      <input
-                        type="checkbox"
-                        checked={r.permissions.includes(p.key)}
-                        onChange={(e) =>
-                          mutate((st) => {
-                            const role = st.roles.find((x) => x.id === r.id)!;
-                            role.permissions = e.target.checked
-                              ? [...role.permissions, p.key as Permission]
-                              : role.permissions.filter((x) => x !== p.key);
-                            logAudit("permisos_actualizados", "role", role.id);
-                          })
-                        }
-                      />
-                      {p.label}
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
+            <FilaRol
+              key={r.id}
+              r={r}
+              usados={s.users.filter((u) => u.roleId === r.id).length}
+              acceso={acceso}
+              abierto={roleAbierto === r.id}
+              onToggleAbierto={() => setRoleAbierto(roleAbierto === r.id ? null : r.id)}
+              onDelete={() => pedirEliminarRol(r)}
+            />
           ))}
         </div>
       </Card>
@@ -369,14 +466,7 @@ function Usuarios() {
         message="¿Seguro que quieres eliminar este rol? No se puede deshacer."
         danger
         onCancel={() => setRoleDel(null)}
-        onConfirm={() => {
-          mutate((st) => {
-            st.roles = st.roles.filter((x) => x.id !== roleDel);
-            logAudit("rol_eliminado", "role", roleDel!);
-          });
-          setRoleDel(null);
-          toast.success("Rol eliminado");
-        }}
+        onConfirm={() => void confirmarEliminarRol()}
       />
 
       <Modal
@@ -388,26 +478,55 @@ function Usuarios() {
           <div className="space-y-3">
             <Field label="Nombre completo">
               <Input
-                value={edit.fullName ?? ""}
+                value={edit.fullName}
+                maxLength={120}
+                disabled={guardandoUsuario}
                 onChange={(e) => setEdit({ ...edit, fullName: e.target.value })}
               />
             </Field>
-            <Field label="Usuario">
+            <Field
+              label="Usuario"
+              hint={
+                edit.id && acceso.mode === "remote"
+                  ? "El usuario no se puede cambiar después de creado"
+                  : undefined
+              }
+            >
               <Input
-                value={edit.username ?? ""}
+                value={edit.username}
+                maxLength={40}
+                disabled={guardandoUsuario || (!!edit.id && acceso.mode === "remote")}
                 onChange={(e) => setEdit({ ...edit, username: e.target.value })}
               />
             </Field>
-            <Field label="Contraseña" hint={edit.id ? "Déjala vacía para no cambiarla" : undefined}>
+            <Field label="Correo (opcional)">
+              <Input
+                type="email"
+                value={edit.email}
+                maxLength={160}
+                disabled={guardandoUsuario}
+                onChange={(e) => setEdit({ ...edit, email: e.target.value })}
+              />
+            </Field>
+            <Field
+              label="Contraseña"
+              hint={
+                edit.id
+                  ? "Déjala vacía para no cambiarla · mínimo 10 caracteres"
+                  : "Mínimo 10 caracteres"
+              }
+            >
               <Input
                 type="text"
-                value={edit.password ?? ""}
+                value={edit.password}
+                disabled={guardandoUsuario}
                 onChange={(e) => setEdit({ ...edit, password: e.target.value })}
               />
             </Field>
             <Field label="Rol">
               <Select
                 value={edit.roleId}
+                disabled={guardandoUsuario}
                 onChange={(e) => setEdit({ ...edit, roleId: e.target.value })}
               >
                 {s.roles.map((r) => (
@@ -420,6 +539,7 @@ function Usuarios() {
             <Field label="Estado">
               <Select
                 value={edit.active ? "1" : "0"}
+                disabled={guardandoUsuario}
                 onChange={(e) => setEdit({ ...edit, active: e.target.value === "1" })}
               >
                 <option value="1">Activo</option>
@@ -427,38 +547,15 @@ function Usuarios() {
               </Select>
             </Field>
             <div className="flex justify-end gap-2">
-              <Btn onClick={() => setEdit(null)}>Cancelar</Btn>
+              <Btn onClick={() => setEdit(null)} disabled={guardandoUsuario}>
+                Cancelar
+              </Btn>
               <Btn
                 variant="amber"
-                onClick={() => {
-                  if (!edit.username?.trim() || !edit.fullName?.trim())
-                    return toast.error("Completa nombre y usuario");
-                  mutate((st) => {
-                    if (edit.id) {
-                      const u = st.users.find((x) => x.id === edit.id)!;
-                      u.fullName = edit.fullName!;
-                      u.username = edit.username!;
-                      u.roleId = edit.roleId!;
-                      u.active = edit.active ?? true;
-                      if (edit.password) u.password = edit.password;
-                      logAudit("usuario_editado", "user", u.id);
-                    } else {
-                      if (!edit.password) return toast.error("Define una contraseña");
-                      st.users.push({
-                        id: uid(),
-                        username: edit.username!,
-                        fullName: edit.fullName!,
-                        password: edit.password!,
-                        roleId: edit.roleId!,
-                        active: true,
-                        createdAt: new Date().toISOString(),
-                      });
-                      logAudit("usuario_creado", "user", edit.username!);
-                    }
-                  });
-                  toast.success("Usuario guardado");
-                  setEdit(null);
-                }}
+                cargando={guardandoUsuario}
+                disabled={bloqueado}
+                title={motivo}
+                onClick={() => void guardarUsuario()}
               >
                 Guardar
               </Btn>
@@ -467,21 +564,217 @@ function Usuarios() {
         )}
       </Modal>
 
-      <ConfirmDialog
-        open={!!del}
-        danger
-        title="Eliminar usuario"
-        message={`¿Eliminar a ${del?.fullName}?`}
-        onCancel={() => setDel(null)}
-        onConfirm={() => {
-          mutate((st) => {
-            st.users = st.users.filter((x) => x.id !== del!.id);
-            logAudit("usuario_eliminado", "user", del!.id);
-          });
-          toast.success("Usuario eliminado");
-          setDel(null);
-        }}
-      />
+      {!hayBackend && (
+        <ConfirmDialog
+          open={!!del}
+          danger
+          title="Eliminar usuario"
+          message={`¿Eliminar a ${del?.fullName}?`}
+          onCancel={() => setDel(null)}
+          onConfirm={() => {
+            try {
+              deleteUser(del!.id);
+              toast.success("Usuario eliminado");
+            } catch (err) {
+              toast.error("No se pudo eliminar el usuario", { description: userErrorText(err) });
+            } finally {
+              setDel(null);
+            }
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function FilaUsuario({
+  u,
+  roles,
+  acceso,
+  hayBackend,
+  protegido,
+  onEdit,
+  onDelete,
+}: {
+  u: User;
+  roles: Role[];
+  acceso: UserAccess;
+  hayBackend: boolean;
+  /** El usuario `admin` o el de la sesión actual: no se puede desactivar ni eliminar desde aquí. */
+  protegido: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const [cambiando, setCambiando] = useState(false);
+  const bloqueado = acceso.mode === "blocked";
+  const motivo = acceso.mode === "blocked" ? acceso.reason : undefined;
+
+  async function alternarActivo() {
+    if (cambiando || bloqueado) return;
+    setCambiando(true);
+    try {
+      await updateUser(u.id, { active: !u.active });
+      toast.success(u.active ? "Usuario desactivado" : "Usuario activado");
+    } catch (err) {
+      toast.error("No se pudo cambiar el estado del usuario", { description: userErrorText(err) });
+    } finally {
+      setCambiando(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5">
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium">{u.fullName}</p>
+        <p className="num text-xs text-muted-foreground">
+          {u.username} · {roles.find((r) => r.id === u.roleId)?.name ?? "—"}
+        </p>
+      </div>
+      <Badge tone={u.active ? "green" : "neutral"}>{u.active ? "Activo" : "Inactivo"}</Badge>
+      <Btn size="sm" onClick={onEdit}>
+        Editar
+      </Btn>
+      {!protegido && hayBackend && (
+        <Btn
+          size="sm"
+          variant="ghost"
+          disabled={bloqueado}
+          cargando={cambiando}
+          title={motivo}
+          onClick={() => void alternarActivo()}
+        >
+          {u.active ? "Desactivar" : "Activar"}
+        </Btn>
+      )}
+      {!protegido && !hayBackend && (
+        <Btn size="sm" variant="ghost" onClick={onDelete}>
+          Eliminar
+        </Btn>
+      )}
+    </div>
+  );
+}
+
+function FilaRol({
+  r,
+  usados,
+  acceso,
+  abierto,
+  onToggleAbierto,
+  onDelete,
+}: {
+  r: Role;
+  usados: number;
+  acceso: UserAccess;
+  abierto: boolean;
+  onToggleAbierto: () => void;
+  onDelete: () => void;
+}) {
+  const [name, setName] = useState(r.name);
+  /** El nombre que trajo el estado la última vez que se sincronizó con el input. */
+  const [adoptado, setAdoptado] = useState(r.name);
+  const [guardandoNombre, setGuardandoNombre] = useState(false);
+  const [guardandoPermisos, setGuardandoPermisos] = useState(false);
+
+  // El nombre cambió en el estado (otro equipo lo renombró y llegó por sync, o
+  // acabó de confirmarlo el servidor): el input adopta el valor autoritativo en
+  // lugar de quedarse enseñando uno viejo.
+  if (adoptado !== r.name) {
+    setAdoptado(r.name);
+    setName(r.name);
+  }
+
+  const bloqueado = acceso.mode === "blocked";
+  const motivo = acceso.mode === "blocked" ? acceso.reason : undefined;
+  const ocupado = guardandoNombre || guardandoPermisos;
+
+  async function guardarNombre() {
+    const limpio = name.trim();
+    if (ocupado || limpio === r.name) {
+      setName(r.name);
+      return;
+    }
+    if (!limpio) {
+      setName(r.name);
+      toast.error("El rol necesita un nombre");
+      return;
+    }
+    if (bloqueado) {
+      setName(r.name);
+      toast.error("No se pudo renombrar el rol", { description: motivo });
+      return;
+    }
+    setGuardandoNombre(true);
+    try {
+      await updateRole(r.id, { name: limpio });
+      toast.success("Rol actualizado");
+    } catch (err) {
+      setName(r.name);
+      toast.error("No se pudo renombrar el rol", { description: userErrorText(err) });
+    } finally {
+      setGuardandoNombre(false);
+    }
+  }
+
+  async function alternarPermiso(permiso: Permission, marcado: boolean) {
+    if (ocupado || bloqueado || r.system) return;
+    const next = marcado ? [...r.permissions, permiso] : r.permissions.filter((p) => p !== permiso);
+    setGuardandoPermisos(true);
+    try {
+      await updateRole(r.id, { permissions: next });
+    } catch (err) {
+      toast.error("No se pudo actualizar los permisos", { description: userErrorText(err) });
+    } finally {
+      setGuardandoPermisos(false);
+    }
+  }
+
+  return (
+    <div className="px-4 py-2.5">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
+        <input
+          value={name}
+          disabled={bloqueado || ocupado}
+          title={motivo}
+          aria-label={`Nombre del rol ${r.name}`}
+          onChange={(e) => setName(e.target.value)}
+          onBlur={() => void guardarNombre()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
+            if (e.key === "Escape") setName(r.name);
+          }}
+          className="min-w-[8rem] flex-1 bg-transparent text-sm font-medium outline-none disabled:cursor-not-allowed disabled:opacity-60"
+        />
+        <span className="num text-xs text-muted-foreground">{r.permissions.length} permisos</span>
+        <Btn size="sm" variant="ghost" onClick={onToggleAbierto}>
+          {abierto ? "Cerrar" : "Permisos"}
+        </Btn>
+        <Btn
+          size="sm"
+          variant="ghost"
+          disabled={bloqueado || r.system}
+          title={r.system ? "Un rol de sistema no se puede eliminar" : motivo}
+          onClick={onDelete}
+        >
+          Eliminar
+        </Btn>
+      </div>
+      {abierto && (
+        <div className="mt-2 grid grid-cols-2 gap-1">
+          {ALL_PERMISSIONS.map((p) => (
+            <label key={p.key} className="flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={r.permissions.includes(p.key)}
+                disabled={bloqueado || ocupado || r.system}
+                title={r.system ? "Un rol de sistema no admite cambios de permisos" : motivo}
+                onChange={(e) => void alternarPermiso(p.key, e.target.checked)}
+              />
+              {p.label}
+            </label>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

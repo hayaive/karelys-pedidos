@@ -11,12 +11,16 @@ import {
 import { toast } from "sonner";
 import { useAppState } from "@/lib/store";
 import {
+  commonPriceTypeId,
   createOrder,
   createSale,
+  defaultPriceType,
   itemsTotals,
   lineBs,
+  mergeLines,
   orderBalance,
   priceOf,
+  repriceLine,
   unitBs,
 } from "@/lib/business";
 import { upsertCustomer } from "@/lib/business";
@@ -24,7 +28,18 @@ import { useMoney } from "@/hooks/use-money";
 import type { Money } from "@/lib/money";
 import { bs, num, parseAmount, usd, validCedula } from "@/lib/format";
 import type { Customer, LineItem, Payment, Product } from "@/lib/types";
-import { Badge, Btn, Card, Field, Input, Modal, Select, Textarea, inputCls } from "./ui-kit";
+import {
+  Badge,
+  Btn,
+  Card,
+  Field,
+  Input,
+  Modal,
+  PriceTypeControl,
+  Select,
+  Textarea,
+  inputCls,
+} from "./ui-kit";
 import { TicketPreview } from "./ticket";
 import type { Sale } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -72,9 +87,17 @@ export function POS({
   const [items, setItems] = useState<LineItem[]>(initialItems ?? []);
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("all");
-  const [priceTypeId, setPriceTypeId] = useState(
-    s.priceTypes.find((p) => p.isDefault)?.id ?? s.priceTypes[0]?.id,
-  );
+  // Arranca en el tipo de precio predeterminado del negocio (Ajustes · Tipos
+  // de precio): si ahí está marcado "Mayor", el mostrador cobra al mayor.
+  // Al procesar un pedido arranca en el tipo común de sus líneas en vez del
+  // predeterminado: si no lo hiciera, el control general (que sí lee las
+  // líneas reales) podría mostrar un tipo mientras este estado —el que se
+  // usa para reprecios y productos nuevos— arranca en otro.
+  const [priceTypeId, setPriceTypeId] = useState(() => {
+    const common = initialItems?.length ? commonPriceTypeId(initialItems) : null;
+    return common ?? defaultPriceType(s)?.id ?? "";
+  });
+  const variosTipos = s.priceTypes.length > 1;
   const [customer, setCustomer] = useState<Customer | null>(() =>
     initialCustomerId ? (s.customers.find((c) => c.id === initialCustomerId) ?? null) : null,
   );
@@ -123,10 +146,24 @@ export function POS({
 
   const { totalUsd, totalBs } = itemsTotals(items, money);
   const liveOrder = orderId ? s.orders.find((o) => o.id === orderId) : undefined;
-  const balance = liveOrder ? orderBalance(s, liveOrder) : null;
+  // El saldo se calcula con las líneas que se están cobrando, no con las que se
+  // guardaron en el pedido: al facturar se puede cambiar el tipo de precio
+  // (Mayor/Detal) y el monto a cobrar tiene que moverse con él. Con las del
+  // pedido, el cobro pedía el total viejo y `createSale` rechazaba la venta
+  // ("los pagos no cubren el total") o daba un vuelto que no correspondía.
+  const balance = liveOrder ? orderBalance(s, { ...liveOrder, items }) : null;
   const hasDeposits = !!balance && balance.depositUsd > 0.001;
+  // Si el nuevo total quedó por debajo de lo ya abonado (se quitaron líneas al
+  // facturar), no hay saldo que cobrar: hay que devolver la diferencia.
+  const overpaidUsd = balance?.overpaidUsd ?? 0;
   const amountDueUsd = balance ? balance.balanceUsd : totalUsd;
   const amountDueBs = money.toBs(amountDueUsd);
+  // Estado real del carrito para el control general: con el carrito vacío (o
+  // sin líneas con tipo, p. ej. solo tortas frías) no hay nada que comparar,
+  // así que se muestra el tipo pendiente para lo próximo que se agregue en vez
+  // de leerlo como "Mixto".
+  const pricedItems = items.filter((i) => !i.bsOnly);
+  const cartPriceType = pricedItems.length ? commonPriceTypeId(items) : priceTypeId;
 
   useShortcuts({
     search_product: () => {
@@ -207,6 +244,21 @@ export function POS({
     document.getElementById("pos-search")?.focus();
   }
 
+  /**
+   * Pone todo el carrito en un tipo de precio, y deja ese tipo para lo que se
+   * agregue después. Pisa los cambios hechos línea por línea: es una acción
+   * explícita ("cóbrale todo al detal"), no un efecto secundario.
+   */
+  function applyPriceTypeToAll(id: string) {
+    setPriceTypeId(id);
+    setItems((prev) => mergeLines(prev.map((i) => repriceLine(s, i, id))));
+  }
+
+  /** Cambia el tipo de precio de una sola línea, sin tocar las demás. */
+  function setLinePriceType(idx: number, id: string) {
+    setItems((prev) => mergeLines(prev.map((i, k) => (k === idx ? repriceLine(s, i, id) : i))));
+  }
+
   const setQty = (idx: number, qty: number) =>
     setItems((prev) =>
       prev
@@ -266,70 +318,87 @@ export function POS({
         const lineProduct = s.products.find((pr) => pr.id === i.productId);
         const lineOutOfStock = lineProduct ? isOutOfStock(lineProduct) : false;
         return (
-        <div key={k} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-3">
-          {/* El nombre ocupa toda la fila en teléfono para que el resto no se apriete. */}
-          <div className="min-w-0 basis-full sm:basis-auto sm:flex-1">
-            <p className="flex min-w-0 items-center gap-2 text-sm font-medium">
-              <span className="min-w-0 truncate">{i.name}</span>
-              {lineOutOfStock && <Badge tone="red">Se agotó</Badge>}
-            </p>
-            {i.customization && <p className="text-xs text-sol-70">{i.customization}</p>}
-            <p className="num text-xs text-muted-foreground">
-              {money.fmtBsAmount(unitBs(i, money))}
-              {!i.bsOnly && <span> ({usd(i.unitPriceUsd + (i.customizationPrice ?? 0))})</span>}
-              {" "}× {i.qty} und
-            </p>
-          </div>
-          {/* Contador y precio: en teléfono en fila propia, separados a los extremos. */}
-          <div className="flex flex-1 items-center justify-between gap-3 sm:flex-none sm:justify-normal">
-            <div className="flex items-center gap-1.5">
-              <Btn
-                icono
-                size="sm"
-                className="size-11 sm:size-[1.95rem]"
-                onClick={() => setQty(k, i.qty - 1)}
-                aria-label={`Quitar una unidad de ${i.name}`}
-              >
-                <IcoMenos />
-              </Btn>
-              <input
-                className={cn(inputCls, "num h-11 w-12 text-center sm:h-9 sm:w-14")}
-                value={i.qty}
-                onChange={(e) => {
-                  const v = parseInt(e.target.value.replace(/\D/g, ""), 10);
-                  if (Number.isFinite(v)) setQty(k, v);
-                }}
-              />
-              <Btn
-                icono
-                size="sm"
-                className="size-11 sm:size-[1.95rem]"
-                onClick={() => setQty(k, i.qty + 1)}
-                aria-label={`Agregar una unidad de ${i.name}`}
-              >
-                <IcoMas />
-              </Btn>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="text-right sm:w-24">
-                <p className="num text-sm font-semibold">{money.fmtBsAmount(lineBs(i, money))}</p>
+          <div key={k} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-3">
+            {/* El nombre ocupa toda la fila en teléfono para que el resto no se apriete. */}
+            <div className="min-w-0 basis-full sm:basis-auto sm:flex-1">
+              <p className="flex min-w-0 items-center gap-2 text-sm font-medium">
+                <span className="min-w-0 truncate">{i.name}</span>
+                {lineOutOfStock && <Badge tone="red">Se agotó</Badge>}
+              </p>
+              {i.customization && <p className="text-xs text-sol-70">{i.customization}</p>}
+              <p className="num text-xs text-muted-foreground">
+                {money.fmtBsAmount(unitBs(i, money))}
                 {!i.bsOnly && (
-                  <p className="num text-[11px] text-muted-foreground">{usd(i.subtotalUsd)}</p>
-                )}
+                  <span> ({usd(i.unitPriceUsd + (i.customizationPrice ?? 0))})</span>
+                )} × {i.qty} und
+              </p>
+              {/* Tipo de precio de esta línea sola: único control interactivo para
+                  ella (el general de arriba repricea todo el carrito de un golpe,
+                  este ajusta solo esta línea). Las líneas bsOnly no tienen tipo. */}
+              {variosTipos && !i.bsOnly && (
+                <div className="mt-1.5">
+                  <PriceTypeControl
+                    priceTypes={s.priceTypes}
+                    value={i.priceTypeId}
+                    onChange={(id) => setLinePriceType(k, id)}
+                    ariaLabel={`Tipo de precio de ${i.name}`}
+                  />
+                </div>
+              )}
+              {variosTipos && i.bsOnly && (
+                <p className="mt-1 text-[11px] text-texto-3">Precio fijo Bs</p>
+              )}
+            </div>
+            {/* Contador y precio: en teléfono en fila propia, separados a los extremos. */}
+            <div className="flex flex-1 items-center justify-between gap-3 sm:flex-none sm:justify-normal">
+              <div className="flex items-center gap-1.5">
+                <Btn
+                  icono
+                  size="sm"
+                  className="size-11 sm:size-[1.95rem]"
+                  onClick={() => setQty(k, i.qty - 1)}
+                  aria-label={`Quitar una unidad de ${i.name}`}
+                >
+                  <IcoMenos />
+                </Btn>
+                <input
+                  className={cn(inputCls, "num h-11 w-12 text-center sm:h-9 sm:w-14")}
+                  value={i.qty}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value.replace(/\D/g, ""), 10);
+                    if (Number.isFinite(v)) setQty(k, v);
+                  }}
+                />
+                <Btn
+                  icono
+                  size="sm"
+                  className="size-11 sm:size-[1.95rem]"
+                  onClick={() => setQty(k, i.qty + 1)}
+                  aria-label={`Agregar una unidad de ${i.name}`}
+                >
+                  <IcoMas />
+                </Btn>
               </div>
-              <Btn
-                icono
-                variant="ghost"
-                size="sm"
-                className="size-11 shrink-0 text-muted-foreground hover:text-rojo sm:size-[1.95rem]"
-                onClick={() => setQty(k, 0)}
-                aria-label={`Quitar ${i.name} del pedido`}
-              >
-                <IcoPapelera />
-              </Btn>
+              <div className="flex items-center gap-1">
+                <div className="text-right sm:w-24">
+                  <p className="num text-sm font-semibold">{money.fmtBsAmount(lineBs(i, money))}</p>
+                  {!i.bsOnly && (
+                    <p className="num text-[11px] text-muted-foreground">{usd(i.subtotalUsd)}</p>
+                  )}
+                </div>
+                <Btn
+                  icono
+                  variant="ghost"
+                  size="sm"
+                  className="size-11 shrink-0 text-muted-foreground hover:text-rojo sm:size-[1.95rem]"
+                  onClick={() => setQty(k, 0)}
+                  aria-label={`Quitar ${i.name} del pedido`}
+                >
+                  <IcoPapelera />
+                </Btn>
+              </div>
             </div>
           </div>
-        </div>
         );
       })}
     </div>
@@ -454,30 +523,20 @@ export function POS({
 
             <span className="num ml-auto text-xs text-muted-foreground">{items.length} líneas</span>
           </div>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <div className="relative flex-1">
-              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-texto-3">
-                <IcoBuscar />
-              </span>
-              <Input
-                id="pos-search"
-                className="pl-9"
-                placeholder={`Buscar por nombre o código (${sc.search_product})`}
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-              />
-            </div>
-            <Select
-              value={priceTypeId}
-              onChange={(e) => setPriceTypeId(e.target.value)}
-              className="sm:w-40"
-            >
-              {s.priceTypes.map((p) => (
-                <option key={p.id} value={p.id}>
-                  Precio {p.name}
-                </option>
-              ))}
-            </Select>
+          {/* El tipo de precio del catálogo (y de lo próximo que se agregue) se
+              decide en el control general del Resumen, no aquí: tenerlo también
+              junto al buscador era un segundo control para la misma decisión. */}
+          <div className="relative">
+            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-texto-3">
+              <IcoBuscar />
+            </span>
+            <Input
+              id="pos-search"
+              className="pl-9"
+              placeholder={`Buscar por nombre o código (${sc.search_product})`}
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
             <Chip active={cat === "all"} onClick={() => setCat("all")}>
@@ -511,7 +570,9 @@ export function POS({
                     {low && <Badge tone="red">{p.stock}</Badge>}
                     <span className="w-24 shrink-0 text-right">
                       <span className="num block text-sm font-semibold text-sol-70">
-                        {p.bsOnly ? bs(p.bsPrice ?? 0) : money.fmtBsAmount(money.toBsRounded(price ?? 0))}
+                        {p.bsOnly
+                          ? bs(p.bsPrice ?? 0)
+                          : money.fmtBsAmount(money.toBsRounded(price ?? 0))}
                       </span>
                       {!p.bsOnly && (
                         <span className="num block text-[11px] text-muted-foreground">
@@ -555,15 +616,65 @@ export function POS({
           {customer && <p className="num text-xs text-muted-foreground">{customer.cedula}</p>}
         </div>
         <div className="border-t border-border py-3">
-          <p className="mb-1.5 text-xs text-muted-foreground">Artículos ({items.length})</p>
+          <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-muted-foreground">Artículos ({items.length})</p>
+            {/* Único control general de la venta: vive aquí (no sólo junto al
+                catálogo) porque al procesar un pedido la tarjeta Productos se
+                oculta y este es el único lugar donde siempre está presente.
+                Muestra la verdad del carrito (mezclado = "Mixto"), no sólo la
+                última elección; al tocarlo repricea todo y queda fijo para lo
+                próximo que se agregue. */}
+            {variosTipos && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] text-muted-foreground">Todo a</span>
+                <PriceTypeControl
+                  priceTypes={s.priceTypes}
+                  value={cartPriceType}
+                  onChange={applyPriceTypeToAll}
+                  ariaLabel="Tipo de precio de toda la venta"
+                  mixedLabel="Mixto"
+                />
+              </div>
+            )}
+          </div>
           {items.length === 0 && <p className="text-sm text-muted-foreground">—</p>}
-          <div className="space-y-1">
+          <div className="space-y-2">
             {items.map((i, k) => (
-              <div key={k} className="flex items-center justify-between gap-2 text-sm">
-                <span className="min-w-0 truncate">{i.name}</span>
-                <span className="num shrink-0 text-right">
-                  {money.fmtBsAmount(lineBs(i, money))}
-                </span>
+              <div key={k}>
+                <div className="flex items-center justify-between gap-2 text-sm">
+                  <span className="min-w-0 truncate">{i.name}</span>
+                  <span className="num shrink-0 text-right">
+                    {money.fmtBsAmount(lineBs(i, money))}
+                  </span>
+                </div>
+                <div className="mt-1 flex items-center gap-2">
+                  {/* En Venta/Pedido la línea ya se edita en la tarjeta Productos
+                      (LineRows): aquí solo se etiqueta, para no tener dos
+                      controles interactivos para la misma línea a la vez. Al
+                      facturar (checkoutOnly) esa tarjeta está oculta, así que
+                      este es el único lugar donde se puede cambiar la línea. */}
+                  {variosTipos &&
+                    !i.bsOnly &&
+                    (checkoutOnly ? (
+                      <PriceTypeControl
+                        priceTypes={s.priceTypes}
+                        value={i.priceTypeId}
+                        onChange={(id) => setLinePriceType(k, id)}
+                        ariaLabel={`Tipo de precio de ${i.name}`}
+                      />
+                    ) : (
+                      <Badge tone="hueco" liso>
+                        {s.priceTypes.find((p) => p.id === i.priceTypeId)?.name ?? ""}
+                      </Badge>
+                    ))}
+                  {variosTipos && i.bsOnly && (
+                    <span className="text-[11px] text-texto-3">Precio fijo Bs</span>
+                  )}
+                  <span className="num text-[11px] text-muted-foreground">
+                    × {i.qty} und
+                    {!i.bsOnly && ` · ${usd(i.unitPriceUsd + (i.customizationPrice ?? 0))}`}
+                  </span>
+                </div>
               </div>
             ))}
           </div>
@@ -593,9 +704,25 @@ export function POS({
                 <span className="text-sm font-medium">Saldo a cobrar</span>
                 <span className="text-right">
                   <span className="num block text-lg font-semibold">{bs(amountDueBs)}</span>
-                  <span className="num block text-xs text-muted-foreground">{usd(amountDueUsd)}</span>
+                  <span className="num block text-xs text-muted-foreground">
+                    {usd(amountDueUsd)}
+                  </span>
                 </span>
               </div>
+              {/* Cambiar a un tipo de precio más barato al facturar puede dejar el
+                  nuevo total por debajo de lo ya abonado: no falta nada por
+                  cobrar, sobra, y hay que devolverlo. */}
+              {overpaidUsd > 0.001 && (
+                <div className="flex items-center justify-between text-verde">
+                  <span className="text-sm">A favor del cliente</span>
+                  <span className="text-right">
+                    <span className="num block text-sm font-semibold">
+                      {money.fmtBs(overpaidUsd)}
+                    </span>
+                    <span className="num block text-[11px] opacity-80">{usd(overpaidUsd)}</span>
+                  </span>
+                </div>
+              )}
             </>
           )}
           <p className="num text-right text-[11px] text-muted-foreground">Tasa BCV: {num(rate)}</p>
@@ -1108,4 +1235,3 @@ function Chip({
     </button>
   );
 }
-

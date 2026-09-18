@@ -15,16 +15,20 @@ import {
   Field,
   Input,
   Modal,
+  PriceTypeControl,
   Select,
   Textarea,
 } from "@/components/ui-kit";
 import { useAppState } from "@/lib/store";
 import {
   addOrderDeposit,
+  commonPriceTypeId,
   deleteOrder,
   itemsTotals,
   lineBs,
+  mergeLines,
   orderBalance,
+  repriceLine,
   setOrderStatus,
   updateOrder,
 } from "@/lib/business";
@@ -424,54 +428,104 @@ function AddDeposit({ orderId, onClose }: { orderId: string; onClose: () => void
 }
 
 function EditOrder({ order, onClose }: { order: Order; onClose: () => void }) {
+  const s = useAppState();
   const money = useMoney();
   const [items, setItems] = useState(order.items);
   const [note, setNote] = useState(order.note ?? "");
   const [status, setStatus] = useState<OrderStatus>(order.status);
+  const variosTipos = s.priceTypes.length > 1;
+  const pricedItems = items.filter((i) => !i.bsOnly);
+  const cartPriceType = commonPriceTypeId(items);
+
+  /** Repricea todo el pedido a un tipo, igual que en el mostrador (POS). */
+  function applyPriceTypeToAll(id: string) {
+    setItems((prev) => mergeLines(prev.map((i) => repriceLine(s, i, id))));
+  }
+
+  /** Cambia el tipo de precio de una sola línea. */
+  function setLinePriceType(idx: number, id: string) {
+    setItems((prev) => mergeLines(prev.map((i, k) => (k === idx ? repriceLine(s, i, id) : i))));
+  }
+
   return (
     <div className="space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs text-muted-foreground">Artículos ({items.length})</p>
+        {/* Mismo control general que en el mostrador: repricea todo el pedido
+            de un golpe y refleja "Mixto" si las líneas quedaron con tipos
+            distintos. Sin líneas con tipo (solo tortas frías) no hay nada que
+            comparar, así que no se muestra. */}
+        {variosTipos && pricedItems.length > 0 && (
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] text-muted-foreground">Todo a</span>
+            <PriceTypeControl
+              priceTypes={s.priceTypes}
+              value={cartPriceType}
+              onChange={applyPriceTypeToAll}
+              ariaLabel="Tipo de precio de todo el pedido"
+              mixedLabel="Mixto"
+            />
+          </div>
+        )}
+      </div>
       <div className="space-y-2">
         {items.map((i, k) => (
-          <div
-            key={k}
-            className="flex items-center gap-2 rounded-md border border-border px-3 py-2.5"
-          >
-            <span className="min-w-0 flex-1 truncate text-sm">{i.name}</span>
-            <input
-              type="number"
-              min={1}
-              value={i.qty}
-              onChange={(e) => {
-                const qty = Math.max(1, parseInt(e.target.value) || 1);
-                setItems(
-                  items.map((x, j) =>
-                    j === k
-                      ? {
-                          ...x,
-                          qty,
-                          subtotalUsd: (x.unitPriceUsd + (x.customizationPrice ?? 0)) * qty,
-                        }
-                      : x,
-                  ),
-                );
-              }}
-              className="num h-10 w-14 shrink-0 rounded border border-border bg-card px-2 text-center text-sm"
-            />
-            <span className="w-20 shrink-0 text-right">
-              <span className="num block text-sm">{money.fmtBsAmount(lineBs(i, money))}</span>
-              {!i.bsOnly && (
-                <span className="num block text-[10px] text-muted-foreground">
-                  {usd(i.subtotalUsd)}
-                </span>
-              )}
-            </span>
-            <button
-              onClick={() => setItems(items.filter((_, j) => j !== k))}
-              className="-mr-1 grid size-10 shrink-0 place-items-center rounded-sm text-muted-foreground transition-colors hover:bg-sup-2 hover:text-rojo"
-              aria-label={`Quitar ${i.name} del pedido`}
-            >
-              <IcoPapelera />
-            </button>
+          <div key={k} className="space-y-2 rounded-md border border-border px-3 py-2.5">
+            <div className="flex items-center gap-2">
+              <span className="min-w-0 flex-1 truncate text-sm font-medium">{i.name}</span>
+              <button
+                onClick={() => setItems(items.filter((_, j) => j !== k))}
+                className="-mr-1 grid size-11 shrink-0 place-items-center rounded-sm text-muted-foreground transition-colors hover:bg-sup-2 hover:text-rojo sm:size-8"
+                aria-label={`Quitar ${i.name} del pedido`}
+              >
+                <IcoPapelera />
+              </button>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  value={i.qty}
+                  onChange={(e) => {
+                    const qty = Math.max(1, parseInt(e.target.value) || 1);
+                    setItems(
+                      items.map((x, j) =>
+                        j === k
+                          ? {
+                              ...x,
+                              qty,
+                              subtotalUsd: (x.unitPriceUsd + (x.customizationPrice ?? 0)) * qty,
+                            }
+                          : x,
+                      ),
+                    );
+                  }}
+                  className="num h-11 w-14 shrink-0 rounded border border-border bg-card px-2 text-center text-sm sm:h-9"
+                />
+                {/* Tipo de precio de esta línea sola, con el mismo control que el
+                    mostrador: único selector interactivo para esta línea. */}
+                {variosTipos && !i.bsOnly && (
+                  <PriceTypeControl
+                    priceTypes={s.priceTypes}
+                    value={i.priceTypeId}
+                    onChange={(id) => setLinePriceType(k, id)}
+                    ariaLabel={`Tipo de precio de ${i.name}`}
+                  />
+                )}
+                {variosTipos && i.bsOnly && (
+                  <span className="text-[11px] text-texto-3">Precio fijo Bs</span>
+                )}
+              </div>
+              <span className="text-right">
+                <span className="num block text-sm">{money.fmtBsAmount(lineBs(i, money))}</span>
+                {!i.bsOnly && (
+                  <span className="num block text-[10px] text-muted-foreground">
+                    {usd(i.subtotalUsd)}
+                  </span>
+                )}
+              </span>
+            </div>
           </div>
         ))}
       </div>

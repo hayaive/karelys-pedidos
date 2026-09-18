@@ -196,6 +196,127 @@ export function Textarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement
   );
 }
 
+/* ── Selector segmentado ─────────────────────────────────────
+   Para decidir entre pocas opciones mutuamente excluyentes sin
+   abrir un desplegable (ver «Grupo de botones» en el sistema).
+   El botón activo se eleva sobre el resto; nunca hay dos activos. */
+
+export type SegmentedOption<T extends string> = { value: T; label: string };
+
+export function Segmented<T extends string>({
+  options,
+  value,
+  onChange,
+  ariaLabel,
+  className,
+}: {
+  options: SegmentedOption<T>[];
+  /** `null` cuando ninguna opción representa el estado actual (selección mixta). */
+  value: T | null;
+  onChange: (v: T) => void;
+  ariaLabel: string;
+  className?: string;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label={ariaLabel}
+      className={cn(
+        "inline-flex items-center gap-0.5 rounded-md border border-linea-2 bg-sup-2 p-0.5",
+        className,
+      )}
+    >
+      {options.map((o) => {
+        const active = o.value === value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onChange(o.value)}
+            className={cn(
+              "inline-flex h-11 min-w-[2.75rem] items-center justify-center whitespace-nowrap rounded-sm px-3 text-sm font-medium",
+              "transition-[background-color,color,box-shadow] duration-[140ms] focus-visible:shadow-[var(--foco)] focus-visible:outline-none",
+              "sm:h-8 sm:px-2.5 sm:text-xs",
+              active ? "bg-card text-texto shadow-1" : "text-texto-2 hover:text-texto",
+            )}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Tipo de precio (Mayor/Detal, …) de una línea o de toda la venta.
+ *
+ * Con 3 tipos o menos se ve y se toca de un golpe (`Segmented`): es la decisión
+ * más frecuente del cajero y no debería costar abrir un desplegable. Con más de
+ * 3 el segmentado ya no cabe cómodo ni se lee rápido, así que cae a `Select`.
+ *
+ * `value: null` es el estado "Mixto" del control general (líneas con tipos
+ * distintos): ningún segmento queda activo y, en el segmentado, se agrega un
+ * chip discreto con `mixedLabel` para que no se lea como "no hay nada elegido".
+ */
+export function PriceTypeControl({
+  priceTypes,
+  value,
+  onChange,
+  ariaLabel,
+  mixedLabel,
+  className,
+}: {
+  priceTypes: { id: string; name: string }[];
+  value: string | null;
+  onChange: (id: string) => void;
+  ariaLabel: string;
+  /** Etiqueta del estado mixto, p. ej. "Mixto". Solo aplica al control general. */
+  mixedLabel?: string;
+  className?: string;
+}) {
+  if (priceTypes.length > 3) {
+    return (
+      <Select
+        value={value ?? ""}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label={ariaLabel}
+        className={cn("h-11 w-auto py-0 text-sm sm:h-8 sm:text-xs", className)}
+      >
+        {value === null && (
+          <option value="" disabled>
+            {mixedLabel ?? "Mixto"}
+          </option>
+        )}
+        {priceTypes.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.name}
+          </option>
+        ))}
+      </Select>
+    );
+  }
+  const segmented = (
+    <Segmented
+      options={priceTypes.map((p) => ({ value: p.id, label: p.name }))}
+      value={value}
+      onChange={onChange}
+      ariaLabel={ariaLabel}
+      className={className}
+    />
+  );
+  if (value !== null || !mixedLabel) return segmented;
+  return (
+    <div className="flex items-center gap-1.5">
+      {segmented}
+      <Badge tone="neutral" liso>
+        {mixedLabel}
+      </Badge>
+    </div>
+  );
+}
+
 /* ── Dinero y cifras ─────────────────────────────────────────
    El dinero siempre en monoespaciada y alineado a la derecha. */
 

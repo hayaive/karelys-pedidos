@@ -45,11 +45,14 @@ import type {
  */
 export {
   bcvRate,
+  commonPriceTypeId,
   companyPriceRule,
   currentRate,
+  defaultPriceType,
   isGenericColdCake,
   itemsTotals,
   lineBs,
+  mergeLines,
   moneyOf,
   moneyOfSale,
   priceAlertOf,
@@ -57,6 +60,7 @@ export {
   priceOf,
   priceRuleOf,
   rateSnapshot,
+  repriceLine,
   totalsOf,
   unitBs,
 } from "./pricing";

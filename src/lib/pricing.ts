@@ -92,6 +92,17 @@ export function rateSnapshot(s: AppState) {
 
 /* ── Precio de un producto ────────────────────────────── */
 
+/**
+ * Tipo de precio predeterminado del negocio (el marcado en Ajustes · Tipos de
+ * precio). **Úsalo en vez de `s.priceTypes[0]`**: el orden de la lista no es la
+ * preferencia del negocio, y una pantalla que lea el primero muestra un precio
+ * distinto del que el mostrador va a cobrar en cuanto alguien marque otro
+ * predeterminado. Cae al primero sólo si ninguno está marcado.
+ */
+export function defaultPriceType(s: AppState) {
+  return s.priceTypes.find((p) => p.isDefault) ?? s.priceTypes[0];
+}
+
 function pick(prices: ProductPrice[], priceTypeId: ID | undefined) {
   return prices.find((x) => x.priceTypeId === priceTypeId)?.amount ?? prices[0]?.amount ?? 0;
 }
@@ -314,6 +325,68 @@ export function itemsTotals(items: LineItem[], m: Money) {
   const totalUsd = items.reduce((a, i) => a + lineUsd(i, m), 0);
   const totalBs = items.reduce((a, i) => a + lineBs(i, m), 0);
   return { totalUsd, totalBs };
+}
+
+/* ── Tipo de precio por línea ─────────────────────────── */
+
+/**
+ * Vuelve a valorar una línea con otro tipo de precio (Mayor, Detal, …).
+ *
+ * El tipo de precio se guarda **en la línea**, no en la pantalla: una venta
+ * puede llevar un producto al mayor y otro al detal. Por eso cambiarlo obliga a
+ * recalcular el unitario y el subtotal de esa línea con el precio de ese tipo.
+ *
+ * Los productos con precio en Bs (`bsOnly`) no tienen tipo de precio: su
+ * unitario es un monto en bolívares, así que se devuelven intactos.
+ */
+export function repriceLine(s: AppState, it: LineItem, priceTypeId: ID): LineItem {
+  if (it.bsOnly) return it;
+  const p = s.products.find((x) => x.id === it.productId);
+  if (!p) return it;
+  const unit = priceOf(s, p, priceTypeId);
+  return {
+    ...it,
+    priceTypeId,
+    unitPriceUsd: unit,
+    subtotalUsd: (unit + (it.customizationPrice ?? 0)) * it.qty,
+  };
+}
+
+/**
+ * Fusiona las líneas que quedaron idénticas. Cambiar el tipo de precio de una
+ * línea puede dejarla igual a otra del carrito (mismo producto, mismo tipo y
+ * misma personalización), y dos líneas iguales en un ticket se leen como un
+ * error de cobro: se suman las cantidades, igual que al agregar dos veces el
+ * mismo producto.
+ */
+export function mergeLines(items: LineItem[]): LineItem[] {
+  const out: LineItem[] = [];
+  for (const it of items) {
+    const twin = out.find(
+      (x) =>
+        x.productId === it.productId &&
+        x.priceTypeId === it.priceTypeId &&
+        (x.customization ?? "") === (it.customization ?? ""),
+    );
+    if (!twin) {
+      out.push({ ...it });
+      continue;
+    }
+    twin.qty += it.qty;
+    twin.subtotalUsd = (twin.unitPriceUsd + (twin.customizationPrice ?? 0)) * twin.qty;
+  }
+  return out;
+}
+
+/**
+ * Tipo de precio común a todo el carrito, o `null` si las líneas mezclan tipos
+ * (una al mayor y otra al detal) o no hay ninguna con tipo. Las líneas `bsOnly`
+ * no cuentan: no tienen tipo de precio. Sirve para que el selector general diga
+ * la verdad sobre el carrito en vez de mostrar el último tipo elegido.
+ */
+export function commonPriceTypeId(items: LineItem[]): ID | null {
+  const ids = new Set(items.filter((i) => !i.bsOnly).map((i) => i.priceTypeId));
+  return ids.size === 1 ? [...ids][0] : null;
 }
 
 /** Compatibilidad: misma semántica que antes, a partir de una tasa suelta. */

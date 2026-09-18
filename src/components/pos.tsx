@@ -1053,13 +1053,18 @@ export function POS({
           // a venta directa (draftEnabled): al facturar un pedido existente
           // no hay borrador propio que borrar aquí.
           if (draftEnabled) clearDraft(mode, userId);
-          onDone?.();
+          // `onDone` no va aquí: al facturar un pedido, Pedidos cierra esta
+          // pantalla en cuanto lo recibe y la factura de abajo se desmontaba
+          // antes de verse. Se avisa al cerrar la factura.
         }}
       />
 
       <Modal
         open={!!lastSale}
-        onClose={() => setLastSale(null)}
+        onClose={() => {
+          setLastSale(null);
+          onDone?.();
+        }}
         title={"Venta " + (lastSale?.number ?? "")}
       >
         {lastSale && <TicketPreview sale={lastSale} />}

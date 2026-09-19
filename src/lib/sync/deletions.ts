@@ -14,7 +14,7 @@
  */
 
 import { logAudit, mutate } from "../store";
-import type { Customer, ID, Product } from "../types";
+import type { Customer, DailyClosure, ID, Product } from "../types";
 import { ApiError, NetworkError, apiFetch } from "./api";
 import { SYNC_ENABLED } from "./config";
 import { getSyncStatus } from "./engine";
@@ -86,7 +86,7 @@ export function deletionErrorText(err: unknown): string {
  * Ninguno de los dos es lo que el cajero espera, así que se bloquea con un
  * motivo claro hasta que la cola confirme el alta o la edición pendiente.
  */
-function hasPendingMutation(entity: "customer" | "product", id: ID): boolean {
+function hasPendingMutation(entity: "customer" | "product" | "closure", id: ID): boolean {
   return pendingMutations().some((m) => {
     if (m.entity !== entity) return false;
     const p = m.payload;
@@ -151,5 +151,49 @@ export async function deleteProduct(product: Product): Promise<void> {
     st.retiredProductCodes = [...retirados];
     st.products = st.products.filter((x) => x.id !== product.id);
     logAudit("producto_eliminado", "product", product.id);
+  });
+}
+
+/* ── Cierres de caja ──────────────────────────────────── */
+
+/**
+ * Reabre un día: borra su cierre (`DELETE /closures/:id`) para poder volver a
+ * contar y cerrar. Las ventas y los abonos no cambian —el cierre sólo guarda lo
+ * contado contra ellos— y el servidor deja el cierre borrado en la bitácora y
+ * un tombstone para que los demás equipos también lo quiten.
+ *
+ * Mismo criterio que el resto de este módulo: primero el servidor. Un cierre
+ * que todavía no subió (se registró sin red) no se puede reabrir hasta que la
+ * cola lo confirme, por lo mismo que con clientes y productos.
+ */
+export async function reopenClosure(closure: DailyClosure): Promise<void> {
+  if (hasPendingMutation("closure", closure.id)) {
+    throw new Error(
+      "Este cierre se registró sin conexión y todavía no se sincronizó. Espera a que suba y vuelve a intentar.",
+    );
+  }
+
+  const access = deletionAccess("cierres");
+  if (access.mode === "blocked") throw new Error(access.reason.replace("eliminar", "reabrir"));
+
+  if (access.mode === "remote") {
+    try {
+      await apiFetch<void>(`/closures/${encodeURIComponent(closure.id)}`, { method: "DELETE" });
+    } catch (err) {
+      const is404 = err instanceof ApiError && err.status === 404;
+      // Los dos 404 traen el mismo `code`; los distingue el mensaje. "Cannot
+      // DELETE …" es la ruta que no existe: un servidor aún sin actualizar.
+      if (is404 && err.message.startsWith("Cannot ")) {
+        throw new Error("El servidor aún no permite reabrir cierres: hay que actualizarlo.");
+      }
+      // "El cierre no existe": otro equipo ya lo reabrió y el tombstone todavía
+      // no llegó aquí. El resultado que se buscaba ya es cierto: se quita local.
+      if (!is404) throw err;
+    }
+  }
+
+  mutate((st) => {
+    st.closures = st.closures.filter((x) => x.id !== closure.id);
+    logAudit("cierre_reabierto", "closure", closure.id, { date: closure.date });
   });
 }

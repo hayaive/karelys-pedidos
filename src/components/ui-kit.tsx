@@ -196,6 +196,52 @@ export function Textarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement
   );
 }
 
+/* ── Palanca (interruptor) ───────────────────────────────────
+   Para un ajuste de sí/no que se aplica al guardar (ver «Ajustes
+   rápidos» en el sistema). Toda la etiqueta es clicable. */
+
+export function Palanca({
+  checked,
+  onChange,
+  disabled,
+  children,
+  hint,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+  children: ReactNode;
+  hint?: ReactNode;
+}) {
+  return (
+    <label
+      className={cn(
+        "inline-flex cursor-pointer items-start gap-[0.6rem] text-[0.92rem]",
+        disabled && "cursor-not-allowed opacity-60",
+      )}
+    >
+      <input
+        type="checkbox"
+        role="switch"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+        className={cn(
+          "relative mt-[0.1rem] h-[1.4rem] w-10 shrink-0 cursor-pointer appearance-none rounded-full bg-linea-2",
+          "transition-colors duration-[180ms] checked:bg-sol disabled:cursor-not-allowed",
+          "after:absolute after:left-[0.17rem] after:top-[0.17rem] after:size-[1.06rem] after:rounded-full after:bg-white after:shadow-1",
+          "after:transition-transform after:duration-[180ms] checked:after:translate-x-[1.1rem]",
+          "focus-visible:shadow-[var(--foco)] focus-visible:outline-none",
+        )}
+      />
+      <span className="min-w-0">
+        <span className="block text-texto">{children}</span>
+        {hint && <span className="mt-0.5 block text-[0.79rem] text-texto-2">{hint}</span>}
+      </span>
+    </label>
+  );
+}
+
 /* ── Selector segmentado ─────────────────────────────────────
    Para decidir entre pocas opciones mutuamente excluyentes sin
    abrir un desplegable (ver «Grupo de botones» en el sistema).

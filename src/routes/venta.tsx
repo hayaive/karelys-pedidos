@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { AppShell, PageHead } from "@/components/app-shell";
+import { AppShell } from "@/components/app-shell";
 import { POS } from "@/components/pos";
 import { shortcutsOf } from "@/lib/shortcuts";
 import { useAppState } from "@/lib/store";
@@ -29,13 +29,13 @@ export const Route = createFileRoute("/venta")({
 
 function Venta() {
   const sc = shortcutsOf(useAppState().company);
+  // El encabezado lo pinta el POS: así "Limpiar todo" queda junto al título.
   return (
-    <>
-      <PageHead
-        title="Venta"
-        sub={`Selecciona productos y cobra. ${sc.search_product} buscar · ${sc.search_customer} cliente · ${sc.checkout} cobrar`}
-      />
-      <POS />
-    </>
+    <POS
+      head={{
+        title: "Venta",
+        sub: `Selecciona productos y cobra. ${sc.search_product} buscar · ${sc.search_customer} cliente · ${sc.checkout} cobrar`,
+      }}
+    />
   );
 }

@@ -124,16 +124,13 @@ export function revalidateDraft(s: AppState, draft: PosDraft): RevalidatedDraft 
       removedCount++;
       continue;
     }
-    if (it.bsOnly) {
-      // Las líneas bsOnly no pasan por repriceLine (no tienen tipo de
-      // precio): su precio vigente es el bsPrice actual del producto.
-      const unitPriceBs = p.bsPrice ?? 0;
-      if (unitPriceBs !== it.unitPriceBs) pricesChanged = true;
-      items.push({ ...it, unitPriceBs });
-      continue;
-    }
+    // `repriceLine` también sabe de las líneas en Bs (precio en Bs del tipo).
     const repriced = repriceLine(s, it, it.priceTypeId);
-    if (repriced.unitPriceUsd !== it.unitPriceUsd) pricesChanged = true;
+    if (
+      repriced.unitPriceUsd !== it.unitPriceUsd ||
+      (repriced.unitPriceBs ?? 0) !== (it.unitPriceBs ?? 0)
+    )
+      pricesChanged = true;
     items.push(repriced);
   }
 

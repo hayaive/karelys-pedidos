@@ -125,7 +125,23 @@ export interface Product {
   active: boolean;
   /** Producto que se vende sólo en Bs (no se convierte desde USD) */
   bsOnly?: boolean;
+  /**
+   * Precio en Bs del tipo predeterminado. En productos anteriores a `bsPrices`
+   * es el único precio en Bs y vale para todos los tipos (ver `bsPriceOf`).
+   */
   bsPrice?: number;
+  /**
+   * Precios en Bs por tipo de precio (Mayor, Detal…) de un producto `bsOnly`.
+   * Van aparte de `prices`, que siempre son USD. Se leen con `bsPriceOf`.
+   */
+  bsPrices?: ProductPrice[];
+  /**
+   * Precio sujeto al rango de Ajustes (mínimo/máximo en USD): si su equivalente
+   * cae por debajo del mínimo, aparece en la lista de precios fuera de rango.
+   * `undefined` en datos viejos se lee como "sólo el genérico de tortas frías"
+   * (ver `priceRuleOf` en lib/pricing), que es como funcionaba antes.
+   */
+  priceBand?: boolean;
   /**
    * Precio propio en USD por tipo de precio. Desde el esquema 6 es **la única
    * fuente de verdad** del precio de venta: ya no existe la indirección del
@@ -166,7 +182,10 @@ export interface PriceAlert {
   mode: "bs" | "usd";
   productId: ID;
   productName: string;
-  /** Sólo en modo `usd`: el tipo de precio que quedó por debajo del umbral. */
+  /**
+   * El tipo de precio que quedó por debajo del umbral. En modo `bs` falta sólo
+   * en productos sin precios en Bs por tipo (un único `bsPrice` para todos).
+   */
   priceTypeId?: ID;
   priceTypeName?: string;
   /** Precio efectivo en USD hoy. En modo `bs`, el equivalente de `currentBs`. */
@@ -204,12 +223,15 @@ export interface InventoryMovement {
   userId: ID;
   createdAt: string;
   /**
-   * Efecto con signo y existencia resultante. Los calcula el **servidor** (un
-   * `ajuste` se resuelve en el momento de aplicarlo, no de capturarlo), así que
-   * sólo están presentes en los movimientos que ya sincronizaron.
+   * Efecto con signo y existencia resultante. `applyMovement` los calcula también
+   * en local (stock nunca negativo: la salida se recorta a lo que hay), pero
+   * quedan opcionales porque el servidor es quien resuelve el valor definitivo
+   * — un `ajuste` se reevalúa en el momento de aplicarlo, no de capturarlo — y
+   * puede diferir hasta que el movimiento sincronice.
    */
   delta?: number;
   stockAfter?: number;
+  /** Venta que originó esta salida (o su anulación, que la devuelve). */
   saleId?: ID;
   orderId?: ID;
   rev?: Rev;

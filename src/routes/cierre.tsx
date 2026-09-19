@@ -3,7 +3,17 @@ import { IcoImprimir } from "@/chasis/iconos";
 import { useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { AppShell, PageHead } from "@/components/app-shell";
-import { Badge, Btn, Card, CardHead, Empty, Field, Input, Textarea } from "@/components/ui-kit";
+import {
+  Badge,
+  Btn,
+  Card,
+  CardHead,
+  ConfirmDialog,
+  Empty,
+  Field,
+  Input,
+  Textarea,
+} from "@/components/ui-kit";
 import { logAudit, mutate, useAppState } from "@/lib/store";
 import { closureDraft } from "@/lib/business";
 import { bs, dayKey, dt, num, parseAmount, usd } from "@/lib/format";
@@ -12,6 +22,7 @@ import { uid } from "@/lib/seed";
 import { useSession } from "@/lib/auth";
 import { useMoney } from "@/hooks/use-money";
 import { queueClosureCreate } from "@/lib/sync/mutations";
+import { deletionErrorText, reopenClosure } from "@/lib/sync/deletions";
 import type { DailyClosure } from "@/lib/types";
 
 export const Route = createFileRoute("/cierre")({
@@ -93,6 +104,25 @@ function Cierre() {
   const [received, setReceived] = useState<Record<string, string>>({});
   const [note, setNote] = useState("");
   const closed = s.closures.find((c) => c.date === day);
+  const [reabrir, setReabrir] = useState(false);
+  const [reabriendo, setReabriendo] = useState(false);
+
+  /** Reabre el día: borra el cierre para volver a contar. Las ventas no cambian. */
+  async function reabrirCierre() {
+    if (!closed || reabriendo) return;
+    setReabriendo(true);
+    try {
+      await reopenClosure(closed);
+      // Lo que se contó y anotó queda como punto de partida del nuevo conteo.
+      setNote(closed.note ?? "");
+      toast.success(`Cierre del ${day} reabierto: puedes volver a contar y cerrar`);
+    } catch (err) {
+      toast.error("No se pudo reabrir el cierre", { description: deletionErrorText(err) });
+    } finally {
+      setReabriendo(false);
+      setReabrir(false);
+    }
+  }
 
   const rate = draft.rate;
 
@@ -232,7 +262,14 @@ function Cierre() {
                     <span className="text-rojo">{usd(closed.differenceUsd)}</span>
                   )}
                 </p>
-                {closed.note && <p className="text-sm text-muted-foreground">{closed.note}</p>}
+                {closed.note && (
+                  <p className="whitespace-pre-line text-sm text-muted-foreground">{closed.note}</p>
+                )}
+                {can("close_cash") && (
+                  <Btn className="w-full" disabled={reabriendo} onClick={() => setReabrir(true)}>
+                    Reabrir cierre
+                  </Btn>
+                )}
               </>
             ) : (
               <>
@@ -326,6 +363,15 @@ function Cierre() {
           </div>
         )}
       </Card>
+
+      <ConfirmDialog
+        open={reabrir}
+        title="Reabrir cierre"
+        message={`¿Reabrir el cierre del ${day}? Se borra lo contado para que puedas volver a contar y cerrar. Las ventas y los abonos del día no cambian, y el cierre anterior queda en la bitácora.`}
+        verbo="Reabrir"
+        onCancel={() => setReabrir(false)}
+        onConfirm={() => void reabrirCierre()}
+      />
     </>
   );
 }

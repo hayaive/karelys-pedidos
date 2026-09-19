@@ -105,14 +105,16 @@ function Pedidos() {
 
   if (creating)
     return (
-      <>
-        <PageHead
-          title="Nuevo pedido"
-          sub="Registra el encargo y déjalo pendiente"
-          action={<Btn onClick={() => setCreating(false)}>Volver</Btn>}
-        />
-        <POS mode="order" onDone={() => setCreating(false)} />
-      </>
+      // El encabezado lo pinta el POS: así "Limpiar todo" queda junto al título.
+      <POS
+        mode="order"
+        onDone={() => setCreating(false)}
+        head={{
+          title: "Nuevo pedido",
+          sub: "Registra el encargo y déjalo pendiente",
+          action: <Btn onClick={() => setCreating(false)}>Volver</Btn>,
+        }}
+      />
     );
 
   if (processing)
@@ -488,7 +490,6 @@ function EditOrder({ order, onClose }: { order: Order; onClose: () => void }) {
   const [note, setNote] = useState(order.note ?? "");
   const [status, setStatus] = useState<OrderStatus>(order.status);
   const variosTipos = s.priceTypes.length > 1;
-  const pricedItems = items.filter((i) => !i.bsOnly);
   const cartPriceType = commonPriceTypeId(items);
   // Texto a medio tipear en el campo de cantidad de cada línea, igual que en
   // el mostrador (ver LineRows en components/pos.tsx): permite borrar el
@@ -529,9 +530,8 @@ function EditOrder({ order, onClose }: { order: Order; onClose: () => void }) {
         <p className="text-xs text-muted-foreground">Artículos ({items.length})</p>
         {/* Mismo control general que en el mostrador: repricea todo el pedido
             de un golpe y refleja "Mixto" si las líneas quedaron con tipos
-            distintos. Sin líneas con tipo (solo tortas frías) no hay nada que
-            comparar, así que no se muestra. */}
-        {variosTipos && pricedItems.length > 0 && (
+            distintos. */}
+        {variosTipos && items.length > 0 && (
           <div className="flex items-center gap-1.5">
             <span className="text-[11px] text-muted-foreground">Todo a</span>
             <PriceTypeControl
@@ -591,16 +591,13 @@ function EditOrder({ order, onClose }: { order: Order; onClose: () => void }) {
                 />
                 {/* Tipo de precio de esta línea sola, con el mismo control que el
                     mostrador: único selector interactivo para esta línea. */}
-                {variosTipos && !i.bsOnly && (
+                {variosTipos && (
                   <PriceTypeControl
                     priceTypes={s.priceTypes}
                     value={i.priceTypeId}
                     onChange={(id) => setLinePriceType(k, id)}
                     ariaLabel={`Tipo de precio de ${i.name}`}
                   />
-                )}
-                {variosTipos && i.bsOnly && (
-                  <span className="text-[11px] text-texto-3">Precio fijo Bs</span>
                 )}
               </div>
               <span className="text-right">

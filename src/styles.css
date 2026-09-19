@@ -433,25 +433,71 @@
   }
 }
 
-/* Ticket térmico 58 mm */
+/* Ticket térmico 58 mm
+   ──────────────────────────────────────────────────────────────
+   El ticket vive enterrado dentro del Modal: velo `fixed inset-0`
+   → caja `relative max-h-[92vh] overflow-hidden` → scroller. Para
+   imprimirlo hay que sacar del flujo TODO lo demás con `display:none`.
+   No vale `visibility:hidden`: oculta pero deja el hueco, así que la
+   app entera (sidebar `h-screen`, shell `min-h-screen`, la tabla de
+   ventas detrás del modal) seguía midiendo — y al re-maquetarse dentro
+   de una columna de 58 mm su altura se disparaba a metros, que con
+   `size: … auto` salían como metros de papel en blanco tras el ticket.
+   Por lo mismo el ticket no puede ir `absolute`: se anclaba a la caja
+   del modal, no a la página. */
 @media print {
-  body * {
-    visibility: hidden;
+  html,
+  body {
+    height: auto !important;
+    /* El Modal congela el scroll con estilo inline; en papel estorba. */
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
   }
-  #ticket-print,
-  #ticket-print * {
-    visibility: visible;
+
+  /* Fuera todo lo que no sea el ticket, un ancestro suyo, o parte de él. */
+  body *:not(:has(#ticket-print)):not(#ticket-print):not(#ticket-print *) {
+    display: none !important;
   }
+
+  /* Los ancestros se quedan por fuerza (contienen al ticket), pero se
+     vuelven cajas neutras: sin posición, sin tamaño y sin recorte. */
+  body *:has(#ticket-print) {
+    display: block !important;
+    position: static !important;
+    inset: auto !important;
+    width: auto !important;
+    max-width: none !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    transform: none !important;
+    animation: none !important;
+  }
+
   #ticket-print {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 55mm;
+    /* El papel mide 58 mm, pero el cabezal solo imprime 48 mm (384 puntos
+       a 203 dpi); los ~5 mm de cada borde son zona muerta física. El
+       `auto` horizontal centra el ticket dentro de esos 58 mm. */
+    width: 48mm;
+    margin: 0 auto;
+    padding: 0;
+    border: 0;
     color: #000;
     background: #fff;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
+
   @page {
     size: 58mm auto;
-    margin: 2mm;
+    margin: 0;
   }
 }

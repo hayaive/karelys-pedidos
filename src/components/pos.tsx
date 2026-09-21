@@ -56,6 +56,7 @@ import { PageHead } from "./app-shell";
 import type { Sale } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { shortcutsOf, useShortcuts } from "@/lib/shortcuts";
+import { searchProducts } from "@/lib/search";
 
 /**
  * Sólo informativo: marca un producto para las etiquetas "Sin stock"/"Se
@@ -174,13 +175,11 @@ export function POS({
 
   const products = useMemo(
     () =>
-      s.products.filter(
-        (p) =>
-          p.active &&
-          (cat === "all" || p.categoryId === cat) &&
-          (q.trim() === "" ||
-            p.name.toLowerCase().includes(q.toLowerCase()) ||
-            p.code.toLowerCase().includes(q.toLowerCase())),
+      // Por nombre o código, sin distinguir mayúsculas, acentos ni espacios, y
+      // con el código exacto primero (ver lib/search).
+      searchProducts(
+        s.products.filter((p) => p.active && (cat === "all" || p.categoryId === cat)),
+        q,
       ),
     [s.products, cat, q],
   );

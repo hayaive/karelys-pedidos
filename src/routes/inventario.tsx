@@ -25,6 +25,7 @@ import { useMoney } from "@/hooks/use-money";
 import { logAudit, mutate, useAppState } from "@/lib/store";
 import { addMovement, bsPriceOf, priceOf } from "@/lib/business";
 import { nextProductCode } from "@/lib/catalog";
+import { searchProducts } from "@/lib/search";
 import { companyPriceRule, defaultPriceType, isPriceBanded, priceAlerts } from "@/lib/pricing";
 import { queueProductCreate, queueProductUpdate } from "@/lib/sync/mutations";
 import {
@@ -77,13 +78,15 @@ function Inventario() {
   // Encabezado de la columna de precio: el del tipo predeterminado (Ajustes).
   const tipoPorDefecto = defaultPriceType(s);
 
-  const list = s.products.filter(
-    (p) =>
-      (cat === "all" || p.categoryId === cat) &&
-      (stockFilter === "all" ||
-        (stockFilter === "bajo" ? p.stock <= p.minStock : p.stock > p.minStock)) &&
-      (p.name.toLowerCase().includes(q.toLowerCase()) ||
-        p.code.toLowerCase().includes(q.toLowerCase())),
+  // Por nombre o código, sin distinguir mayúsculas, acentos ni espacios (lib/search).
+  const list = searchProducts(
+    s.products.filter(
+      (p) =>
+        (cat === "all" || p.categoryId === cat) &&
+        (stockFilter === "all" ||
+          (stockFilter === "bajo" ? p.stock <= p.minStock : p.stock > p.minStock)),
+    ),
+    q,
   );
 
   const alerts = priceAlerts(s);

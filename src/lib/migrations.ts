@@ -23,10 +23,11 @@ import {
 } from "./pricing-rules";
 import { queueProductUpdate } from "./sync/mutations";
 import { pendingMutations, removeMutations } from "./sync/queue";
+import { isPairedWithBackend } from "./sync/session";
 import type { AppState, ID, Product, ProductPrice } from "./types";
 
 /** Versión de esquema que entiende este código. */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 interface Migration {
   to: number;
@@ -300,12 +301,83 @@ function toV6(s: AppState): string[] {
   return notes;
 }
 
+/**
+ * Momento del **reinicio del histórico** en el servidor (2026-09-21, test y
+ * producción): se borraron todos los productos, ventas, pedidos, abonos, kardex
+ * y cierres, y se cargó el catálogo nuevo con códigos abreviados.
+ */
+const HISTORY_RESET_AT = Date.parse("2026-09-21T19:41:00.000Z");
+
+/** Entidades de la cola que sólo tienen sentido contra el histórico borrado. */
+const RESET_QUEUE_ENTITIES = new Set([
+  "sale",
+  "order",
+  "orderDeposit",
+  "movement",
+  "product",
+  "productPrice",
+  "closure",
+]);
+
+/**
+ * v6 → v7
+ *  · suelta de la caché local el histórico anterior al reinicio del servidor.
+ *
+ * Hace falta porque ese histórico **no tiene tombstones**: ventas, abonos y
+ * movimientos son append-only en el contrato de sincronización, y `/bootstrap`
+ * los funde en vez de reemplazarlos (ver `applyBootstrap`), así que un equipo
+ * que ya los tenía los seguiría mostrando para siempre aunque el servidor esté
+ * vacío. Los productos y pedidos sí llegan borrados por tombstone; aquí no se
+ * tocan los productos.
+ *
+ * Sólo se purga lo **anterior** al reinicio: lo que este equipo haya vendido
+ * después es histórico nuevo y legítimo, llegue la actualización cuando llegue.
+ * De la cola se descartan las mutaciones encoladas antes del reinicio que
+ * apuntan a ese histórico: el servidor las rechazaría (sus productos ya no
+ * existen) o, peor, resucitaría una venta que el negocio pidió borrar.
+ *
+ * Un equipo sin backend no se toca: su histórico es el único que existe.
+ */
+function toV7(s: AppState): string[] {
+  if (!isPairedWithBackend()) return [];
+
+  const old = (iso: string | undefined) => {
+    const t = iso ? Date.parse(iso) : NaN;
+    return Number.isFinite(t) && t < HISTORY_RESET_AT;
+  };
+  const notes: string[] = [];
+  const purge = <T>(label: string, list: T[] | undefined, isOld: (x: T) => boolean): T[] => {
+    if (!Array.isArray(list)) return [];
+    const kept = list.filter((x) => !isOld(x));
+    if (kept.length !== list.length) notes.push(`${list.length - kept.length} ${label}`);
+    return kept;
+  };
+
+  s.sales = purge("ventas", s.sales, (x) => old(x.createdAt));
+  s.orders = purge("pedidos", s.orders, (x) => old(x.createdAt));
+  s.movements = purge("movimientos de inventario", s.movements, (x) => old(x.createdAt));
+  s.closures = purge("cierres de caja", s.closures, (x) => old(x.closedAt));
+
+  const stale = pendingMutations().filter(
+    (m) => RESET_QUEUE_ENTITIES.has(m.entity) && old(m.enqueuedAt),
+  );
+  if (stale.length) {
+    removeMutations(stale.map((m) => m.mutationId));
+    notes.push(`${stale.length} mutaciones anteriores al reinicio descartadas de la cola`);
+  }
+
+  if (notes.length)
+    notes.unshift("histórico anterior al reinicio del 21/09/2026 retirado de la caché");
+  return notes;
+}
+
 const MIGRATIONS: Migration[] = [
   { to: 2, name: "price-groups-and-order-deposits", up: toV2 },
   { to: 3, name: "cold-cake-single-product", up: toV3 },
   { to: 4, name: "punto-de-venta-payment-method", up: toV4 },
   { to: 5, name: "oreo-brownie-rename-to-brownie", up: toV5 },
   { to: 6, name: "flatten-price-groups", up: toV6 },
+  { to: 7, name: "history-reset-2026-09", up: toV7 },
 ];
 
 export interface MigrationResult {

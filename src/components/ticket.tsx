@@ -172,9 +172,11 @@ export function TicketPreview(props: TicketProps) {
 }
 
 /** Papel que se deja correr tras la última línea para poder cortarlo en la
- *  sierra sin llevarse el pie: es la distancia cabezal → sierra de la POS-58.
- *  Si el pie queda dentro de la impresora, súbelo; si sobra papel, bájalo. */
-const PIE_MM = 10;
+ *  sierra sin llevarse el pie: es la distancia cabezal → sierra de la POS-58C
+ *  (~20 mm medidos: con 10 mm el corte se comía la nota y el "Powered by", que
+ *  salían arriba del ticket siguiente). Si el pie queda dentro de la
+ *  impresora, súbelo; si sobra papel, bájalo. */
+const PIE_MM = 25;
 
 /**
  * Pide a Chrome una página exactamente del alto del ticket. El rollo no tiene

@@ -441,8 +441,8 @@
    No vale `visibility:hidden`: oculta pero deja el hueco, así que la
    app entera (sidebar `h-screen`, shell `min-h-screen`, la tabla de
    ventas detrás del modal) seguía midiendo — y al re-maquetarse dentro
-   de una columna de 58 mm su altura se disparaba a metros, que con
-   `size: … auto` salían como metros de papel en blanco tras el ticket.
+   de una columna de 58 mm su altura se disparaba a metros, que salían
+   como metros de papel en blanco tras el ticket.
    Por lo mismo el ticket no puede ir `absolute`: se anclaba a la caja
    del modal, no a la página. */
 @media print {
@@ -496,8 +496,10 @@
     print-color-adjust: exact;
   }
 
+  /* Sin `size`: el alto exacto del ticket lo inyecta `TicketPreview` al
+     imprimir (`58mm auto` no es CSS válido y Chrome caía en la hoja de
+     210 mm del driver). */
   @page {
-    size: 58mm auto;
     margin: 0;
   }
 }

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useAppState } from "@/lib/store";
 import { IcoImprimir } from "@/chasis/iconos";
 import { dt } from "@/lib/format";
@@ -46,6 +46,8 @@ export function TicketPreview(props: TicketProps) {
     ? (s.users.find((u) => u.id === order.userId)?.fullName ?? "—")
     : sale!.userName;
   const note = order ? order.note : sale!.note;
+
+  usePaginaDelAltoDelTicket();
 
   return (
     <div className="space-y-3">
@@ -167,6 +169,45 @@ export function TicketPreview(props: TicketProps) {
       </div>
     </div>
   );
+}
+
+/** Papel que se deja correr tras la última línea para poder cortarlo en la
+ *  sierra sin llevarse el pie: es la distancia cabezal → sierra de la POS-58.
+ *  Si el pie queda dentro de la impresora, súbelo; si sobra papel, bájalo. */
+const PIE_MM = 10;
+
+/**
+ * Pide a Chrome una página exactamente del alto del ticket. El rollo no tiene
+ * alto fijo, pero CSS no deja decirlo: `@page { size: 58mm auto }` es inválido
+ * (el alto no admite `auto`) y Chrome descartaba la regla entera, así que caía
+ * en la hoja del driver (58 × 210 mm) y todo lo que el ticket no llenaba salía
+ * en blanco. `beforeprint` corre antes de maquetar la impresión — tanto con el
+ * botón como con Ctrl+P —, mide el ticket con la caja que tendrá en papel
+ * (48 mm sin padding ni borde, ver `#ticket-print` en `@media print`) y fija
+ * ese alto; `afterprint` lo retira.
+ */
+function usePaginaDelAltoDelTicket() {
+  useEffect(() => {
+    const page = document.createElement("style");
+    const measure = () => {
+      const el = document.getElementById("ticket-print");
+      if (!el) return;
+      const screen = el.style.cssText;
+      el.style.cssText += ";width:48mm;padding:0;border:0";
+      const mm = (el.getBoundingClientRect().height * 25.4) / 96;
+      el.style.cssText = screen;
+      page.textContent = `@page { size: 58mm ${Math.ceil(mm + PIE_MM)}mm; margin: 0 }`;
+      document.head.append(page);
+    };
+    const reset = () => page.remove();
+    window.addEventListener("beforeprint", measure);
+    window.addEventListener("afterprint", reset);
+    return () => {
+      window.removeEventListener("beforeprint", measure);
+      window.removeEventListener("afterprint", reset);
+      reset();
+    };
+  }, []);
 }
 
 const Sep = () => <div className="my-1 border-t border-dashed border-black" />;
